@@ -14,7 +14,7 @@ st.set_page_config(
 )
 
 DB = "erp_v8.db"
-BUILD = "TAREK-PAYMENT-FIX-257"
+BUILD = "TAREK-RETURNS-OPTIONAL-INVOICE-417"
 
 MONTHS = [
     "يناير", "فبراير", "مارس", "أبريل",
@@ -75,6 +75,7 @@ external_link|الرابط الخارجى|t
 return_date|تاريخ المرتجع|d
 return_no|رقم المرتجع|t
 original_invoice_no|رقم الفاتورة الأصلية|t
+supply_reference|رقم التوريد أو المرجع|t
 customer_code|كود العميل|t
 customer_name|اسم العميل|t
 return_total|إجمالي المرتجع|n
@@ -221,14 +222,14 @@ CONFIG = {}
 
 for page_name, specification in RAW.items():
     table_name, fields_text = specification
-
-    fields = [
-        tuple(line.strip().split("|"))
-        for line in fields_text.strip().splitlines()
-        if line.strip()
-    ]
-
-    CONFIG[page_name] = (table_name, fields)
+    CONFIG[page_name] = (
+        table_name,
+        [
+            tuple(line.strip().split("|"))
+            for line in fields_text.strip().splitlines()
+            if line.strip()
+        ]
+    )
 
 CLIENT_PAGES = [
     "المبيعات",
@@ -268,12 +269,8 @@ GROUPS = {
         "البنوك",
         "الحركات البنكية"
     ],
-    "المصروفات": [
-        "المصروفات"
-    ],
-    "المسودة": [
-        "المسودة"
-    ],
+    "المصروفات": ["المصروفات"],
+    "المسودة": ["المسودة"],
     "الإعدادات": [
         "إدارة المستخدمين",
         "إعدادات الشركة"
@@ -298,18 +295,9 @@ LISTS = {
         "مرتجع",
         "مرتجع جزئى"
     ],
-    "invoice_plus_invoice": [
-        "لا",
-        "نعم"
-    ],
-    "discount_type": [
-        "نسبة مئوية",
-        "مبلغ ثابت"
-    ],
-    "apply_discount": [
-        "لا",
-        "نعم"
-    ],
+    "invoice_plus_invoice": ["لا", "نعم"],
+    "discount_type": ["نسبة مئوية", "مبلغ ثابت"],
+    "apply_discount": ["لا", "نعم"],
     "collector_name": [
         "محمد رمضان",
         "ايمن",
@@ -330,10 +318,7 @@ LISTS = {
         "وارد",
         "منصرف"
     ],
-    "transaction_type": [
-        "إيداع",
-        "سحب"
-    ],
+    "transaction_type": ["إيداع", "سحب"],
     "conditions": [
         "على المبيعات",
         "على الشيك",
@@ -364,17 +349,13 @@ EXTRAS = {
 
 
 def db():
-    connection = sqlite3.connect(
-        DB,
-        timeout=30
-    )
+    connection = sqlite3.connect(DB, timeout=30)
     connection.row_factory = sqlite3.Row
     return connection
 
 
 def read(sql, arguments=()):
     connection = db()
-
     try:
         return pd.read_sql_query(
             sql,
@@ -387,13 +368,9 @@ def read(sql, arguments=()):
 
 def write(sql, arguments=()):
     connection = db()
-
     try:
         with connection:
-            connection.execute(
-                sql,
-                arguments
-            )
+            connection.execute(sql, arguments)
     finally:
         connection.close()
 
@@ -401,7 +378,6 @@ def write(sql, arguments=()):
 def txt(value):
     if value is None or pd.isna(value):
         return ""
-
     return str(value).strip()
 
 
@@ -447,11 +423,7 @@ def initialize():
                     page TEXT,
                     action TEXT,
                     allowed INTEGER,
-                    PRIMARY KEY(
-                        user_id,
-                        page,
-                        action
-                    )
+                    PRIMARY KEY(user_id, page, action)
                 );
 
                 CREATE TABLE IF NOT EXISTS audit_events(
@@ -481,18 +453,12 @@ def initialize():
                 }
 
                 columns = {
-                    name: (
-                        "REAL"
-                        if kind == "n"
-                        else "TEXT"
-                    )
+                    name: "REAL" if kind == "n" else "TEXT"
                     for name, label, kind in fields
                 }
 
                 columns["company_id"] = "INTEGER"
-                columns.update(
-                    EXTRAS.get(table, {})
-                )
+                columns.update(EXTRAS.get(table, {}))
 
                 for name, sql_type in columns.items():
                     if name not in existing:
@@ -504,10 +470,7 @@ def initialize():
             connection.execute(
                 """
                 INSERT OR IGNORE INTO companies(
-                    id,
-                    name,
-                    system_name,
-                    language
+                    id, name, system_name, language
                 )
                 VALUES(1, ?, ?, ?)
                 """,
@@ -518,17 +481,16 @@ def initialize():
                 )
             )
 
-            user = connection.execute(
+            existing_user = connection.execute(
                 """
                 SELECT id
                 FROM users
-                WHERE username = ?
-                COLLATE NOCASE
+                WHERE username = ? COLLATE NOCASE
                 """,
                 ("tarek",)
             ).fetchone()
 
-            if user is None:
+            if existing_user is None:
                 connection.execute(
                     """
                     INSERT INTO users(
@@ -540,9 +502,7 @@ def initialize():
                         permissions,
                         is_active
                     )
-                    VALUES(
-                        ?, ?, ?, ?, ?, ?, 1
-                    )
+                    VALUES(?, ?, ?, ?, ?, ?, 1)
                     """,
                     (
                         "tarek",
@@ -591,10 +551,7 @@ def can(page, action):
 
 
 def require(page, action):
-    if (
-        not can(page, "view")
-        or not can(page, action)
-    ):
+    if not can(page, "view") or not can(page, action):
         raise ValueError(
             "ليس لديك صلاحية تنفيذ هذه العملية"
         )
@@ -617,19 +574,14 @@ def audit(connection, action, details):
     connection.execute(
         """
         INSERT INTO audit_events(
-            user_id,
-            action,
-            details
+            user_id, action, details
         )
         VALUES(?, ?, ?)
         """,
         (
             int(st.session_state.user["id"]),
             action,
-            json.dumps(
-                details,
-                ensure_ascii=False
-            )
+            json.dumps(details, ensure_ascii=False)
         )
     )
 
@@ -654,17 +606,14 @@ def choices(name, label):
             .tolist()
         )
 
-    return list(
-        LISTS.get(name, [])
-    )
+    return list(LISTS.get(name, []))
 
 
 def picker(prefix, initial=""):
     clients = data("العملاء")
 
     mapping = {
-        str(row.customer_code):
-        str(row.customer_name)
+        str(row.customer_code): str(row.customer_name)
         for row in clients.itertuples()
     }
 
@@ -673,9 +622,7 @@ def picker(prefix, initial=""):
 
     if code_key not in st.session_state:
         st.session_state[code_key] = (
-            initial
-            if initial in mapping
-            else ""
+            initial if initial in mapping else ""
         )
 
     if st.session_state[code_key] not in mapping:
@@ -683,8 +630,7 @@ def picker(prefix, initial=""):
 
     if (
         name_key not in st.session_state
-        or st.session_state[name_key]
-        not in mapping
+        or st.session_state[name_key] not in mapping
     ):
         st.session_state[name_key] = (
             st.session_state[code_key]
@@ -702,10 +648,7 @@ def picker(prefix, initial=""):
         [""] + list(mapping),
         key=code_key,
         on_change=sync,
-        args=(
-            code_key,
-            name_key
-        )
+        args=(code_key, name_key)
     )
 
     right.selectbox(
@@ -713,38 +656,27 @@ def picker(prefix, initial=""):
         [""] + list(mapping),
         format_func=lambda value: (
             f"{mapping[value]} — {value}"
-            if value
-            else "اختر العميل"
+            if value else "اختر العميل"
         ),
         key=name_key,
         on_change=sync,
-        args=(
-            name_key,
-            code_key
-        )
+        args=(name_key, code_key)
     )
 
     code = st.session_state[code_key]
-
     return code, mapping.get(code, "")
 
 
 def due_for_customer(customer, invoice_date):
-    method = txt(
-        customer["payment_method"]
-    )
+    method = txt(customer["payment_method"])
 
-    # لا نحاول تحويل مدة الاستحقاق إلى رقم
-    # في طرق الدفع التي لا تحتاج مدة رقمية.
     if method in (
         "على المبيع",
         "فاتورة + فاتورة"
     ):
         return method
 
-    invoice_date = pd.Timestamp(
-        invoice_date
-    )
+    invoice_date = pd.Timestamp(invoice_date)
 
     if method == "كاش":
         return str(
@@ -757,34 +689,24 @@ def due_for_customer(customer, invoice_date):
     raw_duration = customer["due_days"]
 
     try:
-        duration = num(
-            raw_duration
-        )
-
+        duration = num(raw_duration)
     except (ValueError, TypeError):
         raise ValueError(
             "العميل "
             f"{customer['customer_code']} "
             f"— {customer['customer_name']}: "
             "مدة الاستحقاق يجب أن تكون رقماً، "
-            "لكن المسجل هو "
-            f"{txt(raw_duration)!r}"
+            f"لكن المسجل هو {txt(raw_duration)!r}"
         ) from None
 
-    if (
-        not duration.is_integer()
-        or duration < 0
-    ):
+    if not duration.is_integer() or duration < 0:
         raise ValueError(
             "مدة الاستحقاق يجب أن تكون "
             "عدداً صحيحاً غير سالب"
         )
 
     days = int(duration)
-
-    due_type = txt(
-        customer["due_type"]
-    )
+    due_type = txt(customer["due_type"])
 
     if "نهاية" in due_type:
         return str(
@@ -820,7 +742,6 @@ def prepare(page, values, record_id=None):
         if kind == "n":
             try:
                 values[name] = num(value)
-
             except (ValueError, TypeError):
                 raise ValueError(
                     f"{label}: يجب إدخال رقم، "
@@ -891,14 +812,13 @@ def prepare(page, values, record_id=None):
 
         if code:
             matches = clients[
-                clients["customer_code"]
-                .astype(str) == code
+                clients["customer_code"].astype(str)
+                == code
             ]
-
         else:
             matches = clients[
-                clients["customer_name"]
-                .astype(str) == name
+                clients["customer_name"].astype(str)
+                == name
             ]
 
         if len(matches) != 1:
@@ -911,9 +831,7 @@ def prepare(page, values, record_id=None):
 
         if (
             name
-            and name != txt(
-                customer["customer_name"]
-            )
+            and name != txt(customer["customer_name"])
         ):
             raise ValueError(
                 "اسم العميل لا يطابق الكود"
@@ -922,19 +840,16 @@ def prepare(page, values, record_id=None):
         values["customer_code"] = str(
             customer["customer_code"]
         )
-
         values["customer_name"] = str(
             customer["customer_name"]
         )
 
         if page == "المبيعات":
-            due = due_for_customer(
-                customer,
-                values["invoice_date"]
-            )
-
             values.update(
-                due_date=due,
+                due_date=due_for_customer(
+                    customer,
+                    values["invoice_date"]
+                ),
                 payment_method=txt(
                     customer["payment_method"]
                 ),
@@ -952,14 +867,23 @@ def prepare(page, values, record_id=None):
             "التحصيلات",
             "الخصومات"
         ):
-            invoice = values.get(
-                "original_invoice_no",
-                values.get(
-                    "invoice_no",
-                    ""
+            if page == "المرتجعات":
+                invoice = txt(
+                    values.get(
+                        "original_invoice_no",
+                        ""
+                    )
                 )
-            )
+            else:
+                invoice = txt(
+                    values.get(
+                        "invoice_no",
+                        ""
+                    )
+                )
 
+            # رقم الفاتورة اختياري للمرتجع.
+            # عند إدخاله نتحقق أنه يخص العميل.
             if invoice:
                 found_invoice = read(
                     """
@@ -976,13 +900,23 @@ def prepare(page, values, record_id=None):
                 )
 
                 if found_invoice.empty:
+                    if page == "المرتجعات":
+                        raise ValueError(
+                            "رقم الفاتورة الأصلية غير مسجل "
+                            "لهذا العميل. إذا كان الرقم "
+                            "رقم توريد أو مرجعاً خارجياً، "
+                            "اكتبه في خانة رقم التوريد "
+                            "أو المرجع واترك رقم الفاتورة "
+                            "الأصلية فارغاً."
+                        )
+
                     raise ValueError(
                         "الفاتورة غير مسجلة لهذا العميل"
                     )
 
-            elif page != "الخصومات":
+            elif page == "التحصيلات":
                 raise ValueError(
-                    "رقم الفاتورة مطلوب"
+                    "رقم الفاتورة مطلوب للتحصيل"
                 )
 
     if page == "المرتجعات":
@@ -1006,33 +940,26 @@ def prepare(page, values, record_id=None):
             values["discount_type"]
             == "نسبة مئوية"
         ):
-            discount = (
+            discount_value = (
                 values["invoice_total"]
                 * values["discount_percent"]
                 / 100
             )
-
         else:
-            discount = (
+            discount_value = (
                 values["fixed_amount"]
             )
 
         values.update(
-            discount_value=discount,
+            discount_value=discount_value,
             tax_amount=(
                 values["invoice_total"]
                 - values["before_tax"]
             )
         )
 
-    if page in (
-        "العروض",
-        "خصومات العقد"
-    ):
-        if (
-            values["end_date"]
-            < values["start_date"]
-        ):
+    if page in ("العروض", "خصومات العقد"):
+        if values["end_date"] < values["start_date"]:
             raise ValueError(
                 "تاريخ النهاية يسبق البداية"
             )
@@ -1089,10 +1016,8 @@ def save(
                     f'"{name}"'
                     for name in values
                 )
-
-                marks = ", ".join(
-                    "?"
-                    for _ in values
+                placeholders = ", ".join(
+                    "?" for _ in values
                 )
 
                 connection.execute(
@@ -1103,7 +1028,7 @@ def save(
                     )
                     VALUES(
                         1,
-                        {marks}
+                        {placeholders}
                     )
                     """,
                     list(values.values())
@@ -1124,17 +1049,9 @@ def save(
 
 def refresh():
     st.session_state["revision"] = (
-        st.session_state.get(
-            "revision",
-            0
-        ) + 1
+        st.session_state.get("revision", 0) + 1
     )
-
-    st.session_state.pop(
-        "editing",
-        None
-    )
-
+    st.session_state.pop("editing", None)
     st.rerun()
 
 
@@ -1145,27 +1062,27 @@ def record_form(page, row=None):
         else None
     )
 
-    prefix = (
-        f"{page}_{record_id or 'new'}"
-    )
-
+    prefix = f"{page}_{record_id or 'new'}"
     values = {}
 
     if page in CLIENT_PAGES:
-        initial = (
-            txt(row["customer_code"])
-            if record_id
-            else ""
-        )
-
         code, name = picker(
             prefix,
-            initial
+            txt(row["customer_code"])
+            if record_id else ""
         )
 
         values.update(
             customer_code=code,
             customer_name=name
+        )
+
+    if page == "المرتجعات":
+        st.info(
+            "رقم الفاتورة الأصلية اختياري. "
+            "المرتجع غير المرتبط بفاتورة "
+            "يخصم من حساب العميل العام. "
+            "اكتب رقم التوريد في خانته المستقلة."
         )
 
     with st.form("form_" + prefix):
@@ -1185,29 +1102,18 @@ def record_form(page, row=None):
                 else None
             )
 
-            container = (
-                columns[index % 3]
-            )
-
-            key = (
-                prefix + "_" + name
-            )
+            container = columns[index % 3]
+            key = prefix + "_" + name
 
             if kind == "n":
                 try:
-                    initial = num(
-                        old_value
-                    )
+                    initial = num(old_value)
 
-                except (
-                    ValueError,
-                    TypeError
-                ):
+                except (ValueError, TypeError):
                     initial = 0.0
 
                     container.warning(
-                        "قيمة قديمة غير رقمية "
-                        f"في {label}: "
+                        f"قيمة قديمة غير رقمية في {label}: "
                         f"{txt(old_value)}. "
                         "راجعها قبل الحفظ."
                     )
@@ -1238,10 +1144,7 @@ def record_form(page, row=None):
                         else date.today()
                     )
 
-                except (
-                    ValueError,
-                    TypeError
-                ):
+                except (ValueError, TypeError):
                     initial = date.today()
 
                 values[name] = str(
@@ -1260,26 +1163,19 @@ def record_form(page, row=None):
                 )
 
                 if options:
-                    old_text = txt(
-                        old_value
-                    )
+                    old_text = txt(old_value)
 
                     if (
                         old_text
-                        and old_text
-                        not in options
+                        and old_text not in options
                     ):
                         options = (
-                            [old_text]
-                            + options
+                            [old_text] + options
                         )
 
                     selected_index = (
-                        options.index(
-                            old_text
-                        )
-                        if old_text
-                        in options
+                        options.index(old_text)
+                        if old_text in options
                         else 0
                     )
 
@@ -1296,19 +1192,15 @@ def record_form(page, row=None):
                     values[name] = (
                         container.text_input(
                             label,
-                            value=txt(
-                                old_value
-                            ),
+                            value=txt(old_value),
                             key=key
                         )
                     )
 
-        submitted = (
-            st.form_submit_button(
-                "حفظ التعديل"
-                if record_id
-                else "إضافة"
-            )
+        submitted = st.form_submit_button(
+            "حفظ التعديل"
+            if record_id
+            else "إضافة"
         )
 
     if submitted:
@@ -1324,9 +1216,7 @@ def record_form(page, row=None):
             TypeError,
             sqlite3.Error
         ) as error:
-            st.error(
-                str(error)
-            )
+            st.error(str(error))
 
         else:
             refresh()
@@ -1345,19 +1235,13 @@ def excel_bytes(frame):
             sheet_name="Data"
         )
 
-        sheet = writer.sheets[
-            "Data"
-        ]
+        worksheet = writer.sheets["Data"]
+        worksheet.right_to_left()
+        worksheet.freeze_panes(1, 0)
 
-        sheet.right_to_left()
-        sheet.freeze_panes(1, 0)
-
-        sheet.set_column(
+        worksheet.set_column(
             0,
-            max(
-                len(frame.columns) - 1,
-                0
-            ),
+            max(len(frame.columns) - 1, 0),
             24
         )
 
@@ -1382,21 +1266,24 @@ def import_page(page):
 
     headers = [
         label
-        for name, label, kind
-        in fields
+        for name, label, kind in fields
     ]
 
     if can(page, "export"):
         download(
-            pd.DataFrame(
-                columns=headers
-            ),
-            "template_"
-            + CONFIG[page][0]
+            pd.DataFrame(columns=headers),
+            "template_" + CONFIG[page][0]
         )
 
     if not can(page, "import"):
         return
+
+    if page == "المرتجعات":
+        st.info(
+            "استخدم قالب المرتجعات الجديد. "
+            "يمكن ترك رقم الفاتورة الأصلية فارغاً. "
+            "رقم التوريد يكتب في رقم التوريد أو المرجع."
+        )
 
     uploaded = st.file_uploader(
         "رفع Excel",
@@ -1415,47 +1302,58 @@ def import_page(page):
 
         incoming.columns = [
             str(column).strip()
-            for column
-            in incoming.columns
+            for column in incoming.columns
         ]
 
     except Exception as error:
         st.error(
-            "تعذرت قراءة الملف: "
-            f"{error}"
+            f"تعذرت قراءة الملف: {error}"
         )
         return
 
-    if (
-        incoming.columns
-        .duplicated()
-        .any()
-        or set(incoming.columns)
-        != set(headers)
-    ):
+    if incoming.columns.duplicated().any():
         st.error(
-            "الأعمدة لا تطابق القالب"
+            "يوجد عنوان عمود مكرر في الملف."
+        )
+        return
+
+    # قبول قالب المرتجعات السابق الذي لا يحتوي
+    # عمود رقم التوريد الجديد، وإضافته فارغاً.
+    if (
+        page == "المرتجعات"
+        and "رقم التوريد أو المرجع"
+        not in incoming.columns
+    ):
+        incoming[
+            "رقم التوريد أو المرجع"
+        ] = ""
+
+    if set(incoming.columns) != set(headers):
+        st.error(
+            "الأعمدة لا تطابق القالب."
         )
 
-        st.write(
-            "أعمدة ناقصة:",
-            sorted(
-                set(headers)
-                - set(
-                    incoming.columns
-                )
-            )
+        missing = (
+            set(headers)
+            - set(incoming.columns)
         )
 
-        st.write(
-            "أعمدة إضافية:",
-            sorted(
-                set(
-                    incoming.columns
-                )
-                - set(headers)
-            )
+        extra = (
+            set(incoming.columns)
+            - set(headers)
         )
+
+        if missing:
+            st.write(
+                "أعمدة ناقصة:",
+                sorted(missing)
+            )
+
+        if extra:
+            st.write(
+                "أعمدة إضافية:",
+                sorted(extra)
+            )
 
         return
 
@@ -1471,9 +1369,7 @@ def import_page(page):
         count = 0
         errors = []
 
-        for index, row in (
-            incoming.iterrows()
-        ):
+        for index, row in incoming.iterrows():
             if all(
                 txt(value) == ""
                 for value in row
@@ -1502,28 +1398,22 @@ def import_page(page):
             ) as error:
                 errors.append(
                     {
-                        "صف Excel":
-                        index + 2,
-                        "السبب":
-                        str(error)
+                        "صف Excel": index + 2,
+                        "السبب": str(error)
                     }
                 )
 
         st.success(
-            f"تم حفظ {count} "
-            "صف فعلياً"
+            f"تم حفظ {count} صف فعلياً"
         )
 
         if errors:
-            errors_frame = (
-                pd.DataFrame(
-                    errors
-                )
+            errors_frame = pd.DataFrame(
+                errors
             )
 
             st.warning(
-                "لم يتم حفظ "
-                f"{len(errors)} صف"
+                f"لم يتم حفظ {len(errors)} صف"
             )
 
             st.dataframe(
@@ -1538,50 +1428,42 @@ def import_page(page):
 
 
 def remaining(connection, invoice):
-    returned = (
-        connection.execute(
-            """
-            SELECT COALESCE(
-                SUM(return_total),
-                0
-            )
-            FROM returns
-            WHERE company_id = 1
-              AND original_invoice_no = ?
-            """,
-            (
-                invoice[
-                    "invoice_no"
-                ],
-            )
-        ).fetchone()[0]
-    )
+    # يحسب المرتجعات المرتبطة بالفاتورة فقط.
+    # المرتجعات غير المرتبطة تخصم من حساب العميل العام.
+    returned = connection.execute(
+        """
+        SELECT COALESCE(
+            SUM(return_total), 0
+        )
+        FROM returns
+        WHERE company_id = 1
+          AND original_invoice_no = ?
+          AND customer_code = ?
+        """,
+        (
+            invoice["invoice_no"],
+            invoice["customer_code"]
+        )
+    ).fetchone()[0]
 
-    paid = (
-        connection.execute(
-            """
-            SELECT COALESCE(
-                SUM(amount),
-                0
-            )
-            FROM collections
-            WHERE company_id = 1
-              AND invoice_no = ?
-            """,
-            (
-                invoice[
-                    "invoice_no"
-                ],
-            )
-        ).fetchone()[0]
-    )
+    paid = connection.execute(
+        """
+        SELECT COALESCE(
+            SUM(amount), 0
+        )
+        FROM collections
+        WHERE company_id = 1
+          AND invoice_no = ?
+          AND customer_code = ?
+        """,
+        (
+            invoice["invoice_no"],
+            invoice["customer_code"]
+        )
+    ).fetchone()[0]
 
     return max(
-        num(
-            invoice[
-                "invoice_total"
-            ]
-        )
+        num(invoice["invoice_total"])
         - num(returned)
         - num(paid),
         0
@@ -1594,44 +1476,33 @@ def bulk_action(
     action,
     options=None
 ):
-    require(
-        page,
-        action
-    )
+    require(page, action)
 
     options = options or {}
-
     table = CONFIG[page][0]
     connection = db()
 
     try:
         with connection:
             for record_id in record_ids:
-                row = (
-                    connection.execute(
-                        f"""
-                        SELECT *
-                        FROM "{table}"
-                        WHERE company_id = 1
-                          AND id = ?
-                        """,
-                        (
-                            int(
-                                record_id
-                            ),
-                        )
-                    ).fetchone()
-                )
+                row = connection.execute(
+                    f"""
+                    SELECT *
+                    FROM "{table}"
+                    WHERE company_id = 1
+                      AND id = ?
+                    """,
+                    (int(record_id),)
+                ).fetchone()
 
                 if row is None:
                     raise ValueError(
-                        "أحد السجلات "
-                        "لم يعد موجوداً"
+                        "أحد السجلات لم يعد موجوداً"
                     )
 
                 if action == "delete":
                     if page == "العملاء":
-                        child_tables = [
+                        for child in [
                             "sales",
                             "returns",
                             "collections",
@@ -1639,9 +1510,7 @@ def bulk_action(
                             "magazines",
                             "offers",
                             "contract_discounts"
-                        ]
-
-                        for child in child_tables:
+                        ]:
                             linked = (
                                 connection.execute(
                                     f"""
@@ -1661,13 +1530,12 @@ def bulk_action(
 
                             if linked:
                                 raise ValueError(
-                                    "العميل مرتبط "
-                                    "بحركات؛ "
+                                    "العميل مرتبط بحركات؛ "
                                     "عالجها أولاً"
                                 )
 
                     if page == "المبيعات":
-                        child_links = [
+                        for child, column in [
                             (
                                 "returns",
                                 "original_invoice_no"
@@ -1680,9 +1548,7 @@ def bulk_action(
                                 "discounts",
                                 "invoice_no"
                             )
-                        ]
-
-                        for child, column in child_links:
+                        ]:
                             linked = (
                                 connection.execute(
                                     f"""
@@ -1690,20 +1556,19 @@ def bulk_action(
                                     FROM "{child}"
                                     WHERE company_id = 1
                                       AND "{column}" = ?
+                                      AND customer_code = ?
                                     LIMIT 1
                                     """,
                                     (
-                                        row[
-                                            "invoice_no"
-                                        ],
+                                        row["invoice_no"],
+                                        row["customer_code"]
                                     )
                                 ).fetchone()
                             )
 
                             if linked:
                                 raise ValueError(
-                                    "الفاتورة مرتبطة "
-                                    "بحركات؛ "
+                                    "الفاتورة مرتبطة بحركات؛ "
                                     "عالجها أولاً"
                                 )
 
@@ -1713,11 +1578,7 @@ def bulk_action(
                         WHERE company_id = 1
                           AND id = ?
                         """,
-                        (
-                            int(
-                                record_id
-                            ),
-                        )
+                        (int(record_id),)
                     )
 
                 elif (
@@ -1732,12 +1593,8 @@ def bulk_action(
                           AND id = ?
                         """,
                         (
-                            options[
-                                "status"
-                            ],
-                            int(
-                                record_id
-                            )
+                            options["status"],
+                            int(record_id)
                         )
                     )
 
@@ -1749,6 +1606,41 @@ def bulk_action(
                         "التحصيلات",
                         "add"
                     )
+
+                    # حماية من سداد الفواتير دون مراعاة
+                    # مرتجعات العميل غير المخصصة.
+                    unallocated = connection.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM returns
+                        WHERE company_id = 1
+                          AND customer_code = ?
+                          AND TRIM(
+                              COALESCE(
+                                  original_invoice_no,
+                                  ''
+                              )
+                          ) = ''
+                          AND COALESCE(
+                              return_total,
+                              0
+                          ) <> 0
+                        """,
+                        (
+                            row["customer_code"],
+                        )
+                    ).fetchone()[0]
+
+                    if unallocated:
+                        raise ValueError(
+                            "هذا العميل لديه مرتجعات "
+                            "غير مرتبطة بفواتير. "
+                            "راجع صافي كشف حسابه "
+                            "وسجل التحصيل يدوياً "
+                            "على الفواتير المناسبة، "
+                            "بدلاً من السداد الجماعي "
+                            "بكامل متبقي الفواتير."
+                        )
 
                     amount = remaining(
                         connection,
@@ -1775,32 +1667,19 @@ def bulk_action(
                                 notes
                             )
                             VALUES(
-                                1,
-                                ?, ?, ?, ?,
-                                ?, ?, ?, ?,
-                                ?
+                                1, ?, ?, ?, ?,
+                                ?, ?, ?, ?, ?
                             )
                             """,
                             (
-                                str(
-                                    payment_date
-                                ),
-                                row[
-                                    "customer_code"
-                                ],
-                                row[
-                                    "customer_name"
-                                ],
-                                row[
-                                    "invoice_no"
-                                ],
+                                str(payment_date),
+                                row["customer_code"],
+                                row["customer_name"],
+                                row["invoice_no"],
                                 amount,
-                                options[
-                                    "collector"
-                                ],
+                                options["collector"],
                                 MONTHS[
-                                    payment_date.month
-                                    - 1
+                                    payment_date.month - 1
                                 ],
                                 payment_date.year,
                                 "سداد جماعي"
@@ -1819,8 +1698,7 @@ def bulk_action(
                     "page": page,
                     "ids": [
                         int(value)
-                        for value
-                        in record_ids
+                        for value in record_ids
                     ]
                 }
             )
@@ -1839,76 +1717,71 @@ def grid(page):
     )
 
     if search:
-        mask = (
-            frame.astype(str)
-            .apply(
-                lambda column:
-                column.str.contains(
-                    search,
-                    regex=False,
-                    case=False,
-                    na=False
-                )
+        mask = frame.astype(str).apply(
+            lambda column: column.str.contains(
+                search,
+                regex=False,
+                case=False,
+                na=False
             )
-            .any(axis=1)
-        )
+        ).any(axis=1)
 
         frame = frame[mask]
 
     labels = {
         name: label
-        for name, label, kind
-        in fields
+        for name, label, kind in fields
     }
 
     labels.update(
         {
             "id": "م",
-            "due_date":
-            "تاريخ الاستحقاق",
-            "payment_method":
-            "طريقة الدفع",
-            "tax_amount":
-            "مبلغ الضريبة",
-            "discount_note":
-            "إشعار خصم 1%",
-            "discount_value":
-            "قيمة الخصم"
+            "due_date": "تاريخ الاستحقاق",
+            "payment_method": "طريقة الدفع",
+            "tax_amount": "مبلغ الضريبة",
+            "discount_note": "إشعار خصم 1%",
+            "discount_value": "قيمة الخصم"
         }
     )
 
     shown = (
         frame.drop(
-            columns=[
-                "company_id"
-            ],
+            columns=["company_id"],
             errors="ignore"
         )
-        .rename(
-            columns=labels
-        )
+        .rename(columns=labels)
     )
 
-    if (
-        page == "المبيعات"
-        and not frame.empty
-    ):
+    if page == "المبيعات" and not frame.empty:
         connection = db()
 
         try:
-            shown[
-                "المتبقي المحسوب"
-            ] = [
-                remaining(
-                    connection,
-                    row
-                )
-                for _, row
-                in frame.iterrows()
+            shown["المتبقي المحسوب"] = [
+                remaining(connection, row)
+                for _, row in frame.iterrows()
             ]
-
         finally:
             connection.close()
+
+        st.caption(
+            "متبقي الفاتورة يشمل التحصيلات "
+            "والمرتجعات المرتبطة بها فقط. "
+            "المرتجعات غير المرتبطة تظهر "
+            "في صافي حساب العميل بالملخص "
+            "وكشف الحساب."
+        )
+
+    if page == "المرتجعات" and not frame.empty:
+        shown["نوع الربط"] = [
+            (
+                "مرتبط بفاتورة"
+                if txt(value)
+                else "خصم من حساب العميل"
+            )
+            for value in frame[
+                "original_invoice_no"
+            ]
+        ]
 
     if can(page, "export"):
         download(
@@ -1922,17 +1795,14 @@ def grid(page):
         )
         return
 
-    state = (
-        st.session_state
-        .setdefault(
-            "select_" + page,
-            {
-                "ids": [],
-                "manual": [],
-                "phase": 0,
-                "revision": 0
-            }
-        )
+    state = st.session_state.setdefault(
+        "select_" + page,
+        {
+            "ids": [],
+            "manual": [],
+            "phase": 0,
+            "revision": 0
+        }
     )
 
     cycle_labels = [
@@ -1942,29 +1812,23 @@ def grid(page):
     ]
 
     if st.button(
-        cycle_labels[
-            state["phase"]
-        ],
+        cycle_labels[state["phase"]],
         key="cycle_" + page
     ):
         if state["phase"] == 0:
             state["manual"] = (
                 state["ids"][:]
             )
-
             state["ids"] = [
                 int(value)
-                for value
-                in frame["id"]
+                for value in frame["id"]
             ]
-
             state["phase"] = 1
 
         elif state["phase"] == 1:
             state["ids"] = (
                 state["manual"][:]
             )
-
             state["phase"] = 2
 
         else:
@@ -1983,9 +1847,7 @@ def grid(page):
         "تحديد",
         frame["id"]
         .astype(int)
-        .isin(
-            state["ids"]
-        )
+        .isin(state["ids"])
         .to_numpy()
     )
 
@@ -2009,43 +1871,37 @@ def grid(page):
         f"{st.session_state.get('revision', 0)}"
     )
 
-    edited = (
-        st.data_editor(
-            model,
-            hide_index=True,
-            use_container_width=True,
-            disabled=[
-                column
-                for column
-                in model.columns
-                if column not in (
-                    "تحديد",
-                    "إجراء"
+    edited = st.data_editor(
+        model,
+        hide_index=True,
+        use_container_width=True,
+        disabled=[
+            column
+            for column in model.columns
+            if column not in (
+                "تحديد",
+                "إجراء"
+            )
+        ],
+        column_config={
+            "تحديد": (
+                st.column_config.CheckboxColumn(
+                    "تحديد"
                 )
-            ],
-            column_config={
-                "تحديد": (
-                    st.column_config
-                    .CheckboxColumn(
-                        "تحديد"
-                    )
-                ),
-                "إجراء": (
-                    st.column_config
-                    .SelectboxColumn(
-                        "إجراء",
-                        options=row_options
-                    )
+            ),
+            "إجراء": (
+                st.column_config.SelectboxColumn(
+                    "إجراء",
+                    options=row_options
                 )
-            },
-            key=grid_key
-        )
+            )
+        },
+        key=grid_key
     )
 
     state["ids"] = [
         int(value)
-        for value
-        in edited.loc[
+        for value in edited.loc[
             edited["تحديد"],
             "م"
         ]
@@ -2062,26 +1918,17 @@ def grid(page):
         )
 
     elif len(requested) == 1:
-        item = (
-            requested.iloc[0]
-        )
+        item = requested.iloc[0]
+        record_id = int(item["م"])
 
-        record_id = int(
-            item["م"]
-        )
-
-        if (
-            item["إجراء"]
-            == "تعديل"
-        ):
+        if item["إجراء"] == "تعديل":
             st.session_state.editing = (
                 page,
                 record_id
             )
 
         elif st.button(
-            "تأكيد حذف السجل "
-            f"{record_id}",
+            f"تأكيد حذف السجل {record_id}",
             key="row_delete_" + page
         ):
             try:
@@ -2095,34 +1942,25 @@ def grid(page):
                 ValueError,
                 sqlite3.Error
             ) as error:
-                st.error(
-                    str(error)
-                )
+                st.error(str(error))
 
             else:
-                state[
-                    "revision"
-                ] += 1
-
+                state["revision"] += 1
                 refresh()
 
-    editing = (
-        st.session_state.get(
-            "editing",
-            (None, None)
-        )
+    editing = st.session_state.get(
+        "editing",
+        (None, None)
     )
 
     if editing[0] == page:
         match = frame[
-            frame["id"]
-            == editing[1]
+            frame["id"] == editing[1]
         ]
 
         if not match.empty:
             st.subheader(
-                "تعديل السجل "
-                f"{editing[1]}"
+                f"تعديل السجل {editing[1]}"
             )
 
             record_form(
@@ -2134,15 +1972,10 @@ def grid(page):
                 "إلغاء التعديل",
                 key="cancel_" + page
             ):
-                state[
-                    "revision"
-                ] += 1
-
+                state["revision"] += 1
                 refresh()
 
-    selected_ids = (
-        state["ids"]
-    )
+    selected_ids = state["ids"]
 
     if not selected_ids:
         return
@@ -2162,10 +1995,7 @@ def grid(page):
 
         if (
             page == "المبيعات"
-            and can(
-                page,
-                "receive"
-            )
+            and can(page, "receive")
         ):
             operations[
                 "تغيير حالة الاستلام"
@@ -2173,14 +2003,8 @@ def grid(page):
 
         if (
             page == "المبيعات"
-            and can(
-                page,
-                "settle"
-            )
-            and can(
-                "التحصيلات",
-                "add"
-            )
+            and can(page, "settle")
+            and can("التحصيلات", "add")
         ):
             operations[
                 "سداد المتبقي بالكامل"
@@ -2188,67 +2012,54 @@ def grid(page):
 
         if not operations:
             st.info(
-                "لا توجد عمليات "
-                "جماعية مصرح بها"
+                "لا توجد عمليات جماعية مصرح بها"
             )
             return
 
-        title = (
-            st.selectbox(
-                "الإجراء",
-                list(operations),
-                key=(
-                    "bulk_operation_"
-                    + page
-                )
-            )
+        title = st.selectbox(
+            "الإجراء",
+            list(operations),
+            key="bulk_operation_" + page
         )
 
-        action = (
-            operations[title]
-        )
+        action = operations[title]
 
         if action == "receive":
-            details[
-                "status"
-            ] = st.selectbox(
-                "حالة الاستلام الجديدة",
-                LISTS[
-                    "receipt_status"
-                ]
+            details["status"] = (
+                st.selectbox(
+                    "حالة الاستلام الجديدة",
+                    LISTS["receipt_status"]
+                )
             )
 
         if action == "settle":
-            details[
-                "date"
-            ] = st.date_input(
-                "تاريخ السداد"
+            details["date"] = (
+                st.date_input(
+                    "تاريخ السداد"
+                )
             )
 
-            details[
-                "collector"
-            ] = st.text_input(
-                "المحصل",
-                value="طارق"
+            details["collector"] = (
+                st.text_input(
+                    "المحصل",
+                    value="طارق"
+                )
             )
 
             st.caption(
-                "السداد يحسب الإجمالي "
-                "ناقص التحصيلات والمرتجعات؛ "
+                "يسجل تحصيلات فعلية "
+                "للمتبقي من الفواتير. "
+                "يمنع التنفيذ للعميل "
+                "الذي لديه مرتجعات غير مرتبطة "
+                "حتى تراجع تسويتها. "
                 "لا يخصص خصومات العميل "
-                "والمجلات على الفواتير."
+                "والمجلات تلقائياً."
             )
 
-        confirmed = (
-            st.checkbox(
-                f"أوافق على {title} "
-                "لعدد "
-                f"{len(selected_ids)} سجل",
-                key=(
-                    "bulk_confirm_"
-                    + page
-                )
-            )
+        confirmed = st.checkbox(
+            f"أوافق على {title} "
+            f"لعدد {len(selected_ids)} سجل",
+            key="bulk_confirm_" + page
         )
 
         if st.button(
@@ -2268,9 +2079,7 @@ def grid(page):
                 ValueError,
                 sqlite3.Error
             ) as error:
-                st.error(
-                    str(error)
-                )
+                st.error(str(error))
 
             else:
                 state.update(
@@ -2278,20 +2087,16 @@ def grid(page):
                     manual=[],
                     phase=0,
                     revision=(
-                        state[
-                            "revision"
-                        ] + 1
+                        state["revision"] + 1
                     )
                 )
-
                 refresh()
 
 
 def users_page():
     if not admin():
         st.error(
-            "إدارة المستخدمين "
-            "للحساب الأساسي فقط"
+            "إدارة المستخدمين للحساب الأساسي فقط"
         )
         return
 
@@ -2314,29 +2119,18 @@ def users_page():
     )
 
     with st.form("new_user"):
-        username = (
-            st.text_input(
-                "اسم المستخدم الجديد"
-            )
+        username = st.text_input(
+            "اسم المستخدم الجديد"
         )
-
-        full_name = (
-            st.text_input(
-                "الاسم الكامل"
-            )
+        full_name = st.text_input(
+            "الاسم الكامل"
         )
-
-        password = (
-            st.text_input(
-                "كلمة المرور",
-                type="password"
-            )
+        password = st.text_input(
+            "كلمة المرور",
+            type="password"
         )
-
-        submitted = (
-            st.form_submit_button(
-                "إنشاء حساب بلا صلاحيات"
-            )
+        submitted = st.form_submit_button(
+            "إنشاء حساب بلا صلاحيات"
         )
 
     if submitted:
@@ -2345,8 +2139,7 @@ def users_page():
             or not password
         ):
             st.error(
-                "اسم المستخدم "
-                "وكلمة المرور مطلوبان"
+                "اسم المستخدم وكلمة المرور مطلوبان"
             )
 
         else:
@@ -2357,9 +2150,7 @@ def users_page():
                 WHERE username = ?
                 COLLATE NOCASE
                 """,
-                (
-                    username.strip(),
-                )
+                (username.strip(),)
             )
 
             if not existing.empty:
@@ -2392,19 +2183,16 @@ def users_page():
                         ""
                     )
                 )
-
                 refresh()
 
-    user_id = (
-        st.selectbox(
-            "الحساب لتعديل صلاحياته",
-            users["id"].tolist(),
-            format_func=lambda value: str(
-                users.loc[
-                    users["id"] == value,
-                    "username"
-                ].iloc[0]
-            )
+    user_id = st.selectbox(
+        "الحساب لتعديل صلاحياته",
+        users["id"].tolist(),
+        format_func=lambda value: str(
+            users.loc[
+                users["id"] == value,
+                "username"
+            ].iloc[0]
         )
     )
 
@@ -2418,17 +2206,11 @@ def users_page():
             "ومحمي من الحذف والتعطيل"
         )
 
-        with st.form(
-            "admin_password"
-        ):
-            replacement = (
-                st.text_input(
-                    "كلمة مرور جديدة "
-                    "للحساب الأساسي",
-                    type="password"
-                )
+        with st.form("admin_password"):
+            replacement = st.text_input(
+                "كلمة مرور جديدة للحساب الأساسي",
+                type="password"
             )
-
             update_password = (
                 st.form_submit_button(
                     "تغيير كلمة المرور"
@@ -2444,17 +2226,13 @@ def users_page():
                     WHERE id = ?
                     """,
                     (
-                        digest(
-                            replacement
-                        ),
+                        digest(replacement),
                         int(user_id)
                     )
                 )
-
                 st.success(
                     "تم تغيير كلمة المرور"
                 )
-
             else:
                 st.error(
                     "أدخل كلمة المرور الجديدة"
@@ -2468,20 +2246,13 @@ def users_page():
         FROM page_permissions
         WHERE user_id = ?
         """,
-        (
-            int(user_id),
-        )
+        (int(user_id),)
     )
 
     lookup = {
-        (
-            row.page,
-            row.action
-        ): bool(
-            row.allowed
-        )
-        for row
-        in saved.itertuples()
+        (row.page, row.action):
+        bool(row.allowed)
+        for row in saved.itertuples()
     }
 
     matrix = pd.DataFrame(
@@ -2490,64 +2261,43 @@ def users_page():
                 "الصفحة": page,
                 **{
                     label: lookup.get(
-                        (
-                            page,
-                            action
-                        ),
+                        (page, action),
                         False
                     )
                     for action, label
                     in ACTIONS.items()
                 }
             }
-            for page
-            in PAGES
+            for page in PAGES
         ]
     )
 
     st.caption(
-        "إلغاء عرض يمنع الدخول "
-        "وكل العمليات. "
+        "إلغاء عرض يمنع الدخول وكل العمليات. "
         "السداد والاستلام للمبيعات فقط."
     )
 
-    edited = (
-        st.data_editor(
-            matrix,
-            disabled=[
-                "الصفحة"
-            ],
-            hide_index=True,
-            use_container_width=True,
-            key=(
-                "permissions_"
-                f"{user_id}"
-            )
-        )
+    edited = st.data_editor(
+        matrix,
+        disabled=["الصفحة"],
+        hide_index=True,
+        use_container_width=True,
+        key=f"permissions_{user_id}"
     )
 
     active = st.checkbox(
         "حساب مفعّل",
-        value=bool(
-            user["is_active"]
-        ),
+        value=bool(user["is_active"]),
         key=f"active_{user_id}"
     )
 
-    replacement = (
-        st.text_input(
-            "كلمة مرور بديلة (اختياري)",
-            type="password",
-            key=(
-                "password_"
-                f"{user_id}"
-            )
-        )
+    replacement = st.text_input(
+        "كلمة مرور بديلة (اختياري)",
+        type="password",
+        key=f"password_{user_id}"
     )
 
-    if st.button(
-        "حفظ الصلاحيات"
-    ):
+    if st.button("حفظ الصلاحيات"):
         connection = db()
 
         try:
@@ -2556,9 +2306,7 @@ def users_page():
                     for action, label in ACTIONS.items():
                         permitted = (
                             bool(row[label])
-                            and bool(
-                                row["عرض"]
-                            )
+                            and bool(row["عرض"])
                         )
 
                         connection.execute(
@@ -2570,21 +2318,13 @@ def users_page():
                                 action,
                                 allowed
                             )
-                            VALUES(
-                                ?, ?, ?, ?
-                            )
+                            VALUES(?, ?, ?, ?)
                             """,
                             (
-                                int(
-                                    user_id
-                                ),
-                                row[
-                                    "الصفحة"
-                                ],
+                                int(user_id),
+                                row["الصفحة"],
                                 action,
-                                int(
-                                    permitted
-                                )
+                                int(permitted)
                             )
                         )
 
@@ -2608,12 +2348,8 @@ def users_page():
                         WHERE id = ?
                         """,
                         (
-                            digest(
-                                replacement
-                            ),
-                            int(
-                                user_id
-                            )
+                            digest(replacement),
+                            int(user_id)
                         )
                     )
 
@@ -2621,9 +2357,7 @@ def users_page():
                     connection,
                     "permissions",
                     {
-                        "user_id": int(
-                            user_id
-                        )
+                        "user_id": int(user_id)
                     }
                 )
 
@@ -2634,14 +2368,9 @@ def users_page():
             "تم حفظ الصلاحيات"
         )
 
-    confirm_delete = (
-        st.checkbox(
-            "تأكيد حذف هذا المستخدم",
-            key=(
-                "delete_user_confirm_"
-                f"{user_id}"
-            )
-        )
+    confirm_delete = st.checkbox(
+        "تأكيد حذف هذا المستخدم",
+        key=f"delete_user_confirm_{user_id}"
     )
 
     if st.button(
@@ -2657,19 +2386,14 @@ def users_page():
                     DELETE FROM page_permissions
                     WHERE user_id = ?
                     """,
-                    (
-                        int(user_id),
-                    )
+                    (int(user_id),)
                 )
-
                 connection.execute(
                     """
                     DELETE FROM users
                     WHERE id = ?
                     """,
-                    (
-                        int(user_id),
-                    )
+                    (int(user_id),)
                 )
 
         finally:
@@ -2689,49 +2413,32 @@ def reports(page):
     ]
 
     if not all(
-        can(
-            source,
-            "view"
-        )
-        for source
-        in sources
+        can(source, "view")
+        for source in sources
     ):
         st.warning(
-            "التقرير يحتاج صلاحية "
-            "عرض جميع مصادره"
+            "التقرير يحتاج صلاحية عرض جميع مصادره"
         )
         return
 
-    clients = data(
-        "العملاء"
-    )
+    clients = data("العملاء")
 
     if page == "كشف الحساب":
-        code, name = picker(
-            "report"
-        )
+        code, name = picker("report")
 
         if not code:
             return
 
-        left, right = (
-            st.columns(2)
+        left, right = st.columns(2)
+
+        start = left.date_input(
+            "من تاريخ",
+            value=date(2024, 1, 1)
         )
 
-        start = (
-            left.date_input(
-                "من تاريخ",
-                value=date(
-                    2024, 1, 1
-                )
-            )
-        )
-
-        end = (
-            right.date_input(
-                "إلى تاريخ",
-                value=date.today()
-            )
+        end = right.date_input(
+            "إلى تاريخ",
+            value=date.today()
         )
 
         if end < start:
@@ -2741,14 +2448,12 @@ def reports(page):
             return
 
         customer = clients[
-            clients["customer_code"]
-            .astype(str) == code
+            clients["customer_code"].astype(str)
+            == code
         ].iloc[0]
 
         balance = num(
-            customer[
-                "opening_balance"
-            ]
+            customer["opening_balance"]
         )
 
         movements = []
@@ -2791,127 +2496,120 @@ def reports(page):
             sign,
             reference_column
         ) in movement_sources:
-            frame = data(
-                source
-            )
+            frame = data(source)
 
             frame = frame[
-                frame["customer_code"]
-                .astype(str) == code
+                frame["customer_code"].astype(str)
+                == code
             ]
 
             for _, row in frame.iterrows():
-                parsed = (
-                    pd.to_datetime(
-                        row[
-                            day_column
-                        ],
-                        errors="coerce"
-                    )
+                parsed = pd.to_datetime(
+                    row[day_column],
+                    errors="coerce"
                 )
 
-                if pd.isna(
-                    parsed
-                ):
+                if pd.isna(parsed):
                     continue
+
+                description = ""
+                supply_reference = ""
+
+                if source == "المرتجعات":
+                    linked_invoice = txt(
+                        row.get(
+                            "original_invoice_no"
+                        )
+                    )
+
+                    description = (
+                        f"مرتجع مرتبط بالفاتورة {linked_invoice}"
+                        if linked_invoice
+                        else "مرتجع خصم من حساب العميل"
+                    )
+
+                    supply_reference = txt(
+                        row.get(
+                            "supply_reference"
+                        )
+                    )
 
                 movements.append(
                     {
-                        "date":
-                        parsed.date(),
-                        "type":
-                        source,
-                        "reference":
-                        txt(
+                        "date": parsed.date(),
+                        "type": source,
+                        "reference": txt(
                             row.get(
                                 reference_column
                             )
                         ),
-                        "value":
-                        sign * num(
-                            row.get(
-                                amount_column
+                        "supply_reference":
+                        supply_reference,
+                        "description":
+                        description,
+                        "value": (
+                            sign * num(
+                                row.get(
+                                    amount_column
+                                )
                             )
                         )
                     }
                 )
 
-        magazines = data(
-            "المجلات"
-        )
+        magazines = data("المجلات")
 
         magazines = magazines[
-            magazines[
-                "customer_code"
-            ].astype(str) == code
+            magazines["customer_code"].astype(str)
+            == code
         ]
 
         for _, row in magazines.iterrows():
-            month = txt(
-                row["month"]
-            )
-
-            year = int(
-                num(
-                    row["year"]
-                )
-            )
+            month = txt(row["month"])
+            year = int(num(row["year"]))
 
             if month in MONTHS and year:
                 movements.append(
                     {
                         "date": date(
                             year,
-                            MONTHS.index(
-                                month
-                            ) + 1,
+                            MONTHS.index(month) + 1,
                             1
                         ),
-                        "type":
-                        "المجلات",
-                        "reference":
-                        txt(
-                            row[
-                                "magazine_type"
-                            ]
+                        "type": "المجلات",
+                        "reference": txt(
+                            row["magazine_type"]
                         ),
-                        "value":
-                        -num(
-                            row[
-                                "discount_value"
-                            ]
+                        "supply_reference": "",
+                        "description": "خصم مجلة",
+                        "value": -num(
+                            row["discount_value"]
                         )
                     }
                 )
 
         balance += sum(
             movement["value"]
-            for movement
-            in movements
-            if movement["date"]
-            < start
+            for movement in movements
+            if movement["date"] < start
         )
 
         output = [
             {
-                "التاريخ":
-                str(start),
-                "النوع":
-                "رصيد بداية الفترة",
-                "المستند":
-                "",
-                "مدين":
-                0,
-                "دائن":
-                0,
-                "الرصيد":
-                balance
+                "التاريخ": str(start),
+                "النوع": "رصيد بداية الفترة",
+                "المستند": "",
+                "رقم التوريد أو المرجع": "",
+                "البيان": "",
+                "مدين": 0,
+                "دائن": 0,
+                "الرصيد": balance
             }
         ]
 
         movements.sort(
-            key=lambda value:
-            value["date"]
+            key=lambda movement:
+            movement["date"]
         )
 
         for movement in movements:
@@ -2920,49 +2618,34 @@ def reports(page):
             )
 
             if not (
-                start
-                <= movement_date
-                <= end
+                start <= movement_date <= end
             ):
                 continue
 
-            amount = (
-                movement["value"]
-            )
-
+            amount = movement["value"]
             balance += amount
 
             output.append(
                 {
-                    "التاريخ":
-                    str(
+                    "التاريخ": str(
                         movement_date
                     ),
-                    "النوع":
-                    movement["type"],
-                    "المستند":
-                    movement[
+                    "النوع": movement["type"],
+                    "المستند": movement[
                         "reference"
                     ],
-                    "مدين":
-                    max(
-                        amount,
-                        0
-                    ),
-                    "دائن":
-                    max(
-                        -amount,
-                        0
-                    ),
-                    "الرصيد":
-                    balance
+                    "رقم التوريد أو المرجع":
+                    movement["supply_reference"],
+                    "البيان":
+                    movement["description"],
+                    "مدين": max(amount, 0),
+                    "دائن": max(-amount, 0),
+                    "الرصيد": balance
                 }
             )
 
-        report = (
-            pd.DataFrame(
-                output
-            )
+        report = pd.DataFrame(
+            output
         )
 
         st.subheader(
@@ -2970,16 +2653,14 @@ def reports(page):
         )
 
         st.caption(
-            "خصومات المجلات تؤرخ "
-            "بأول يوم من الشهر المسجل"
+            "يشمل المرتجعات المرتبطة وغير المرتبطة "
+            "بفواتير. خصومات المجلات تؤرخ "
+            "بأول يوم من الشهر المسجل."
         )
 
     else:
-        search = (
-            st.text_input(
-                "اكتب الكل أو "
-                "اسم العميل أو كوده"
-            )
+        search = st.text_input(
+            "اكتب الكل أو اسم العميل أو كوده"
         )
 
         if not search.strip():
@@ -3029,102 +2710,67 @@ def reports(page):
             amount_column,
             label
         ) in totals_sources:
-            frame = data(
-                source
-            )
+            frame = data(source)
 
-            frame[
-                amount_column
-            ] = (
+            frame[amount_column] = (
                 pd.to_numeric(
-                    frame[
-                        amount_column
-                    ],
+                    frame[amount_column],
                     errors="coerce"
-                )
-                .fillna(0)
+                ).fillna(0)
             )
 
-            totals = (
-                frame.groupby(
-                    "customer_code"
-                )[
-                    amount_column
-                ].sum()
-            )
+            totals = frame.groupby(
+                "customer_code"
+            )[amount_column].sum()
 
             report[label] = (
-                report[
-                    "customer_code"
-                ]
+                report["customer_code"]
                 .map(totals)
                 .fillna(0)
             )
 
-        opening = (
-            pd.to_numeric(
-                report[
-                    "opening_balance"
-                ],
-                errors="coerce"
-            )
-            .fillna(0)
-        )
+        opening = pd.to_numeric(
+            report["opening_balance"],
+            errors="coerce"
+        ).fillna(0)
 
         report["المستحق"] = (
             opening
-            + report[
-                "المبيعات"
-            ]
-            - report[
-                "المرتجعات"
-            ]
-            - report[
-                "التحصيلات"
-            ]
-            - report[
-                "الخصومات"
-            ]
-            - report[
-                "المجلات"
-            ]
+            + report["المبيعات"]
+            - report["المرتجعات"]
+            - report["التحصيلات"]
+            - report["الخصومات"]
+            - report["المجلات"]
         )
 
         if search.strip() != "الكل":
-            mask = (
-                report[
-                    [
-                        "customer_code",
-                        "customer_name"
-                    ]
+            mask = report[
+                [
+                    "customer_code",
+                    "customer_name"
                 ]
-                .astype(str)
-                .apply(
-                    lambda column:
-                    column.str.contains(
-                        search,
-                        regex=False,
-                        na=False
-                    )
+            ].astype(str).apply(
+                lambda column:
+                column.str.contains(
+                    search,
+                    regex=False,
+                    na=False
                 )
-                .any(axis=1)
-            )
+            ).any(axis=1)
 
-            report = (
-                report[mask]
-            )
+            report = report[mask]
 
-        report = (
-            report.rename(
-                columns={
-                    "customer_code":
-                    "كود العميل",
-                    "customer_name":
-                    "اسم العميل",
-                    "opening_balance":
-                    "رصيد أول المدة"
-                }
-            )
+        report = report.rename(
+            columns={
+                "customer_code": "كود العميل",
+                "customer_name": "اسم العميل",
+                "opening_balance": "رصيد أول المدة"
+            }
+        )
+
+        st.caption(
+            "إجمالي المرتجعات يشمل كل مرتجعات "
+            "العميل، سواء لها رقم فاتورة أم لا."
         )
 
     st.dataframe(
@@ -3140,19 +2786,9 @@ def reports(page):
 
 
 def navigate(group):
-    st.session_state.group = (
-        group
-    )
-
-    st.session_state.pop(
-        "page",
-        None
-    )
-
-    st.session_state.pop(
-        "editing",
-        None
-    )
+    st.session_state.group = group
+    st.session_state.pop("page", None)
+    st.session_state.pop("editing", None)
 
 
 def login_screen():
@@ -3161,23 +2797,15 @@ def login_screen():
     )
 
     with st.form("login"):
-        username = (
-            st.text_input(
-                "اسم المستخدم"
-            )
+        username = st.text_input(
+            "اسم المستخدم"
         )
-
-        password = (
-            st.text_input(
-                "كلمة المرور",
-                type="password"
-            )
+        password = st.text_input(
+            "كلمة المرور",
+            type="password"
         )
-
-        submitted = (
-            st.form_submit_button(
-                "دخول"
-            )
+        submitted = st.form_submit_button(
+            "دخول"
         )
 
     if not submitted:
@@ -3188,8 +2816,7 @@ def login_screen():
         or not password
     ):
         st.error(
-            "أدخل اسم المستخدم "
-            "وكلمة المرور"
+            "أدخل اسم المستخدم وكلمة المرور"
         )
         return
 
@@ -3197,32 +2824,23 @@ def login_screen():
         """
         SELECT *
         FROM users
-        WHERE username = ?
-        COLLATE NOCASE
+        WHERE username = ? COLLATE NOCASE
           AND is_active = 1
         """,
-        (
-            username.strip(),
-        )
+        (username.strip(),)
     )
 
     if (
         not found.empty
-        and found.iloc[0][
-            "password_hash"
-        ] == digest(
-            password
-        )
+        and found.iloc[0]["password_hash"]
+        == digest(password)
     ):
         st.session_state.user = (
-            found.iloc[0]
-            .to_dict()
+            found.iloc[0].to_dict()
         )
-
         st.session_state.group = (
             "الرئيسية"
         )
-
         st.rerun()
 
     else:
@@ -3234,32 +2852,20 @@ def login_screen():
 
 def company_settings(company):
     with st.form("settings"):
-        company_name = (
-            st.text_input(
-                "اسم الشركة",
-                value=txt(
-                    company[
-                        "name"
-                    ]
-                )
+        company_name = st.text_input(
+            "اسم الشركة",
+            value=txt(company["name"])
+        )
+
+        system_name = st.text_input(
+            "اسم النظام",
+            value=txt(
+                company["system_name"]
             )
         )
 
-        system_name = (
-            st.text_input(
-                "اسم النظام",
-                value=txt(
-                    company[
-                        "system_name"
-                    ]
-                )
-            )
-        )
-
-        submitted = (
-            st.form_submit_button(
-                "حفظ"
-            )
+        submitted = st.form_submit_button(
+            "حفظ"
         )
 
     if not submitted:
@@ -3298,8 +2904,7 @@ def company_settings(company):
 
 def main():
     st.caption(
-        "نسخة التشغيل: "
-        + BUILD
+        "نسخة التشغيل: " + BUILD
     )
 
     try:
@@ -3308,15 +2913,12 @@ def main():
     except sqlite3.Error as error:
         st.error(
             "تعذر تجهيز قاعدة البيانات؛ "
-            "راجع سجل التشغيل "
-            "ولا تحذف البيانات"
+            "راجع سجل التشغيل ولا تحذف البيانات"
         )
-
         st.write(
             "نوع الخطأ:",
             type(error).__name__
         )
-
         return
 
     st.session_state.setdefault(
@@ -3324,10 +2926,7 @@ def main():
         None
     )
 
-    if (
-        st.session_state.user
-        is None
-    ):
+    if st.session_state.user is None:
         login_screen()
         return
 
@@ -3340,8 +2939,7 @@ def main():
         """,
         (
             int(
-                st.session_state
-                .user["id"]
+                st.session_state.user["id"]
             ),
         )
     )
@@ -3351,8 +2949,7 @@ def main():
         st.rerun()
 
     st.session_state.user = (
-        found.iloc[0]
-        .to_dict()
+        found.iloc[0].to_dict()
     )
 
     company = read(
@@ -3364,11 +2961,7 @@ def main():
     ).iloc[0]
 
     st.title(
-        txt(
-            company[
-                "system_name"
-            ]
-        )
+        txt(company["system_name"])
         or "نظام الحسابات والمبيعات"
     )
 
@@ -3384,11 +2977,9 @@ def main():
         st.session_state.clear()
         st.rerun()
 
-    group = (
-        st.session_state.get(
-            "group",
-            "الرئيسية"
-        )
+    group = st.session_state.get(
+        "group",
+        "الرئيسية"
     )
 
     if group == "الرئيسية":
@@ -3396,31 +2987,20 @@ def main():
             "الأقسام الرئيسية"
         )
 
-        columns = (
-            st.columns(3)
-        )
-
+        columns = st.columns(3)
         visible = 0
 
         for group_name, pages in GROUPS.items():
             if not any(
-                can(
-                    page,
-                    "view"
-                )
-                for page
-                in pages
+                can(page, "view")
+                for page in pages
             ):
                 continue
 
-            columns[
-                visible % 3
-            ].button(
+            columns[visible % 3].button(
                 group_name,
                 on_click=navigate,
-                args=(
-                    group_name,
-                ),
+                args=(group_name,),
                 use_container_width=True
             )
 
@@ -3429,8 +3009,7 @@ def main():
         if not visible:
             st.warning(
                 "لا توجد صفحات مصرح بها؛ "
-                "اطلب من طارق "
-                "ضبط صلاحياتك"
+                "اطلب من طارق ضبط صلاحياتك"
             )
 
         return
@@ -3438,22 +3017,13 @@ def main():
     st.sidebar.button(
         "العودة للرئيسية",
         on_click=navigate,
-        args=(
-            "الرئيسية",
-        )
+        args=("الرئيسية",)
     )
 
     pages = [
         page
-        for page
-        in GROUPS.get(
-            group,
-            []
-        )
-        if can(
-            page,
-            "view"
-        )
+        for page in GROUPS.get(group, [])
+        if can(page, "view")
     ]
 
     if not pages:
@@ -3462,12 +3032,10 @@ def main():
         )
         return
 
-    page = (
-        st.sidebar.radio(
-            group,
-            pages,
-            key="page"
-        )
+    page = st.sidebar.radio(
+        group,
+        pages,
+        key="page"
     )
 
     st.subheader(
@@ -3485,45 +3053,28 @@ def main():
             )
 
         if (
-            can(
-                page,
-                "import"
-            )
-            or can(
-                page,
-                "export"
-            )
+            can(page, "import")
+            or can(page, "export")
         ):
             operations.append(
                 "قالب واستيراد"
             )
 
-        operation = (
-            st.radio(
-                "العملية",
-                operations,
-                horizontal=True,
-                key=(
-                    "operation_"
-                    + page
-                )
-            )
+        operation = st.radio(
+            "العملية",
+            operations,
+            horizontal=True,
+            key="operation_" + page
         )
 
         if operation == "عرض":
-            grid(
-                page
-            )
+            grid(page)
 
         elif operation == "إضافة":
-            record_form(
-                page
-            )
+            record_form(page)
 
         else:
-            import_page(
-                page
-            )
+            import_page(page)
 
     elif page == "إدارة المستخدمين":
         users_page()
@@ -3532,14 +3083,10 @@ def main():
         "كشف الحساب",
         "الملخص"
     ):
-        reports(
-            page
-        )
+        reports(page)
 
     elif page == "إعدادات الشركة":
-        company_settings(
-            company
-        )
+        company_settings(company)
 
 
 if __name__ == "__main__":
