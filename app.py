@@ -3,120 +3,2931 @@ import json
 import hashlib
 import sqlite3
 from datetime import date
+
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="حسابات طارق",layout="wide")
-DB="erp_v8.db"
-BUILD="TAREK-SINGLE-227"
-MONTHS=["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"]
-ACTIONS={"view":"عرض","add":"إضافة","edit":"تعديل","delete":"حذف","import":"استيراد","export":"تصدير","settle":"سداد","receive":"تغيير الاستلام"}
-RAW={
-"العملاء":("customers","customer_code:كود العميل:t;customer_name:اسم العميل:t;payment_method:طريقة الدفع:t;due_days:مدة الاستحقاق:n;due_type:نوع الاستحقاق:t;opening_balance:رصيد أول المدة:n;branches_count:عدد الفروع:n;branches:الفروع:t;tax_number:الرقم الضريبي:t;invoice_plus_invoice:تنبيه فاتورة + فاتورة:t;credit_limit:الحد الأقصى للعميل:n"),
-"المبيعات":("sales","invoice_no:رقم الفاتورة:t;invoice_date:تاريخ الفاتورة:d;customer_code:كود العميل:t;customer_name:اسم العميل:t;invoice_total:إجمالي الفاتورة:n;before_tax:قيمة قبل الضريبة:n;receipt_status:حالة الاستلام:t;supply_order_no:رقم أمر التوريد:t;external_link:الرابط الخارجى:t"),
-"المرتجعات":("returns","return_date:تاريخ المرتجع:d;return_no:رقم المرتجع:t;original_invoice_no:رقم الفاتورة الأصلية:t;customer_code:كود العميل:t;customer_name:اسم العميل:t;return_total:إجمالي المرتجع:n;before_tax:قبل الضريبة:n;reason:سبب المرتجع:t;external_link:الرابط الخارجى:t"),
-"التحصيلات":("collections","collection_date:تاريخ التحصيل:d;customer_code:كود العميل:t;customer_name:اسم العميل:t;invoice_no:رقم الفاتورة:t;amount:مبلغ التحصيل:n;collector_name:المحصل:t;month:الشهر:t;year:السنة:n;notes:ملاحظات:t"),
-"الخصومات":("discounts","discount_date:تاريخ الخصم:d;customer_code:كود العميل:t;customer_name:اسم العميل:t;invoice_no:رقم الفاتورة:t;discount_type:نوع الخصم:t;discount_percent:نسبة الخصم %:n;fixed_amount:مبلغ الخصم الثابت:n;invoice_total:إجمالي المبلغ:n;before_tax:قبل الضريبة:n;reason:سبب الخصم:t;month:الشهر:t;year:السنة:n;correction:تصحيح:t;notes:ملاحظات:t;external_link:الرابط الخارجى:t"),
-"خصومات العقد":("contract_discounts","customer_code:كود العميل:t;customer_name:اسم العميل:t;discount_type:نوع الخصم:t;percent:النسبة %:n;amount:المبلغ:n;applied_on:على ماذا:t;conditions:الشروط:t;start_date:تاريخ البداية:d;end_date:تاريخ النهاية:d;apply_discount:تطبيق الخصم:t"),
-"المجلات":("magazines","customer_code:كود العميل:t;customer_name:اسم العميل:t;month:الشهر:t;year:السنة:n;discount_value:قيمة خصم المجلة:n;magazine_type:نوع المجلة:t;notes:ملاحظات:t"),
-"العروض":("offers","customer_code:كود العميل:t;customer_name:اسم العميل:t;description:وصف العرض:t;discount_percent:نسبة الخصم %:n;start_date:تاريخ البداية:d;end_date:تاريخ النهاية:d"),
-"الموردين":("suppliers","supplier_code:كود المورد:t;supplier_name:اسم المورد:t;phone:الهاتف:t;tax_number:الرقم الضريبي:t;opening_balance:رصيد أول المدة:n;notes:ملاحظات:t"),
-"فواتير الموردين":("supplier_invoices","invoice_no:رقم الفاتورة:t;invoice_date:تاريخ الفاتورة:d;supplier_code:كود المورد:t;supplier_name:اسم المورد:t;invoice_total:إجمالي الفاتورة:n;paid_amount:المدفوع:n;notes:ملاحظات:t"),
-"البنوك":("bank_accounts","account_name:اسم الحساب:t;bank_name:اسم البنك:t;account_number:رقم الحساب:t;opening_balance:رصيد أول المدة:n"),
-"الحركات البنكية":("bank_transactions","transaction_date:تاريخ الحركة:d;account_name:اسم الحساب:t;transaction_type:نوع الحركة:t;amount:المبلغ:n;notes:ملاحظات:t"),
-"المصروفات":("expenses","expense_date:تاريخ المصروف:d;expense_group:نوع المصروف:t;expense_type:تفصيل المصروف:t;amount:المبلغ:n;notes:ملاحظات:t"),
-"المسودة":("dropdown_options","page:الصفحة:t;field:القائمة:t;value:القيمة:t")}
-CONFIG={p:(t,[tuple(f.split(':')) for f in fs.split(';')]) for p,(t,fs) in RAW.items()}
-CLIENT_PAGES=list(CONFIG)[1:8]
-PAGES=list(CONFIG)+["كشف الحساب","الملخص","إدارة المستخدمين","إعدادات الشركة"]
-GROUPS={"حسابات العملاء والمبيعات":list(CONFIG)[:8]+["كشف الحساب","الملخص"],"الموردين":["الموردين","فواتير الموردين"],"البنوك":["البنوك","الحركات البنكية"],"المصروفات":["المصروفات"],"المسودة":["المسودة"],"الإعدادات":["إدارة المستخدمين","إعدادات الشركة"]}
-LISTS={"payment_method":["كاش","آجل","على المبيع","فاتورة + فاتورة"],"due_type":["يوم من تاريخ الفاتورة","يوم من نهاية شهر الفاتورة","شهر"],"receipt_status":["تم الاستلام","لم يتم الاستلام","مرتجع","مرتجع جزئى"],"invoice_plus_invoice":["لا","نعم"],"discount_type":["نسبة مئوية","مبلغ ثابت"],"apply_discount":["لا","نعم"],"collector_name":["محمد رمضان","ايمن","حماده","طارق","مندوب مبيعات"],"month":MONTHS,"expense_group":["مصاريف الأستاذ","مصاريف الخزينة","سداد الافريقية"],"expense_type":["بنزين","مصاريف","سداد الافريقية","وارد","منصرف"],"transaction_type":["إيداع","سحب"]}
-EXTRAS={"sales":{"due_date":"TEXT","payment_method":"TEXT","discount_note":"REAL","tax_amount":"REAL"},"returns":{"due_date":"TEXT","tax_amount":"REAL"},"discounts":{"discount_value":"REAL","tax_amount":"REAL"}}
+
+st.set_page_config(
+    page_title="نظام الحسابات والمبيعات",
+    layout="wide"
+)
+
+DB = "erp_v8.db"
+BUILD = "TAREK-FULL-236"
+
+MONTHS = [
+    "يناير", "فبراير", "مارس", "أبريل",
+    "مايو", "يونيو", "يوليو", "أغسطس",
+    "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"
+]
+
+ACTIONS = {
+    "view": "عرض",
+    "add": "إضافة",
+    "edit": "تعديل",
+    "delete": "حذف",
+    "import": "استيراد",
+    "export": "تصدير",
+    "settle": "سداد",
+    "receive": "تغيير الاستلام"
+}
+
+# نوع الحقل:
+# t = نص
+# n = رقم
+# d = تاريخ
+
+RAW = {
+    "العملاء": (
+        "customers",
+        """
+customer_code|كود العميل|t
+customer_name|اسم العميل|t
+payment_method|طريقة الدفع|t
+due_days|مدة الاستحقاق|n
+due_type|نوع الاستحقاق|t
+opening_balance|رصيد أول المدة|n
+branches_count|عدد الفروع|n
+branches|الفروع|t
+tax_number|الرقم الضريبي|t
+invoice_plus_invoice|تنبيه فاتورة + فاتورة|t
+credit_limit|الحد الأقصى للعميل|n
+"""
+    ),
+    "المبيعات": (
+        "sales",
+        """
+invoice_no|رقم الفاتورة|t
+invoice_date|تاريخ الفاتورة|d
+customer_code|كود العميل|t
+customer_name|اسم العميل|t
+invoice_total|إجمالي الفاتورة|n
+before_tax|قيمة قبل الضريبة|n
+receipt_status|حالة الاستلام|t
+supply_order_no|رقم أمر التوريد|t
+external_link|الرابط الخارجى|t
+"""
+    ),
+    "المرتجعات": (
+        "returns",
+        """
+return_date|تاريخ المرتجع|d
+return_no|رقم المرتجع|t
+original_invoice_no|رقم الفاتورة الأصلية|t
+customer_code|كود العميل|t
+customer_name|اسم العميل|t
+return_total|إجمالي المرتجع|n
+before_tax|قبل الضريبة|n
+reason|سبب المرتجع|t
+external_link|الرابط الخارجى|t
+"""
+    ),
+    "التحصيلات": (
+        "collections",
+        """
+collection_date|تاريخ التحصيل|d
+customer_code|كود العميل|t
+customer_name|اسم العميل|t
+invoice_no|رقم الفاتورة|t
+amount|مبلغ التحصيل|n
+collector_name|المحصل|t
+month|الشهر|t
+year|السنة|n
+notes|ملاحظات|t
+"""
+    ),
+    "الخصومات": (
+        "discounts",
+        """
+discount_date|تاريخ الخصم|d
+customer_code|كود العميل|t
+customer_name|اسم العميل|t
+invoice_no|رقم الفاتورة|t
+discount_type|نوع الخصم|t
+discount_percent|نسبة الخصم %|n
+fixed_amount|مبلغ الخصم الثابت|n
+invoice_total|إجمالي المبلغ|n
+before_tax|قبل الضريبة|n
+reason|سبب الخصم|t
+month|الشهر|t
+year|السنة|n
+correction|تصحيح|t
+notes|ملاحظات|t
+external_link|الرابط الخارجى|t
+"""
+    ),
+    "خصومات العقد": (
+        "contract_discounts",
+        """
+customer_code|كود العميل|t
+customer_name|اسم العميل|t
+discount_type|نوع الخصم|t
+percent|النسبة %|n
+amount|المبلغ|n
+applied_on|على ماذا|t
+conditions|الشروط|t
+start_date|تاريخ البداية|d
+end_date|تاريخ النهاية|d
+apply_discount|تطبيق الخصم|t
+"""
+    ),
+    "المجلات": (
+        "magazines",
+        """
+customer_code|كود العميل|t
+customer_name|اسم العميل|t
+month|الشهر|t
+year|السنة|n
+discount_value|قيمة خصم المجلة|n
+magazine_type|نوع المجلة|t
+notes|ملاحظات|t
+"""
+    ),
+    "العروض": (
+        "offers",
+        """
+customer_code|كود العميل|t
+customer_name|اسم العميل|t
+description|وصف العرض|t
+discount_percent|نسبة الخصم %|n
+start_date|تاريخ البداية|d
+end_date|تاريخ النهاية|d
+"""
+    ),
+    "الموردين": (
+        "suppliers",
+        """
+supplier_code|كود المورد|t
+supplier_name|اسم المورد|t
+phone|الهاتف|t
+tax_number|الرقم الضريبي|t
+opening_balance|رصيد أول المدة|n
+notes|ملاحظات|t
+"""
+    ),
+    "فواتير الموردين": (
+        "supplier_invoices",
+        """
+invoice_no|رقم الفاتورة|t
+invoice_date|تاريخ الفاتورة|d
+supplier_code|كود المورد|t
+supplier_name|اسم المورد|t
+invoice_total|إجمالي الفاتورة|n
+paid_amount|المدفوع|n
+notes|ملاحظات|t
+"""
+    ),
+    "البنوك": (
+        "bank_accounts",
+        """
+account_name|اسم الحساب|t
+bank_name|اسم البنك|t
+account_number|رقم الحساب|t
+opening_balance|رصيد أول المدة|n
+"""
+    ),
+    "الحركات البنكية": (
+        "bank_transactions",
+        """
+transaction_date|تاريخ الحركة|d
+account_name|اسم الحساب|t
+transaction_type|نوع الحركة|t
+amount|المبلغ|n
+notes|ملاحظات|t
+"""
+    ),
+    "المصروفات": (
+        "expenses",
+        """
+expense_date|تاريخ المصروف|d
+expense_group|نوع المصروف|t
+expense_type|تفصيل المصروف|t
+amount|المبلغ|n
+notes|ملاحظات|t
+"""
+    ),
+    "المسودة": (
+        "dropdown_options",
+        """
+page|الصفحة|t
+field|القائمة|t
+value|القيمة|t
+"""
+    )
+}
+
+CONFIG = {}
+
+for page_name, specification in RAW.items():
+    table_name, field_text = specification
+
+    CONFIG[page_name] = (
+        table_name,
+        [
+            tuple(line.strip().split("|"))
+            for line in field_text.strip().splitlines()
+            if line.strip()
+        ]
+    )
+
+CLIENT_PAGES = [
+    "المبيعات",
+    "المرتجعات",
+    "التحصيلات",
+    "الخصومات",
+    "خصومات العقد",
+    "المجلات",
+    "العروض"
+]
+
+PAGES = list(CONFIG) + [
+    "كشف الحساب",
+    "الملخص",
+    "إدارة المستخدمين",
+    "إعدادات الشركة"
+]
+
+GROUPS = {
+    "حسابات العملاء والمبيعات": [
+        "العملاء",
+        "المبيعات",
+        "المرتجعات",
+        "التحصيلات",
+        "الخصومات",
+        "خصومات العقد",
+        "المجلات",
+        "العروض",
+        "كشف الحساب",
+        "الملخص"
+    ],
+    "الموردين": [
+        "الموردين",
+        "فواتير الموردين"
+    ],
+    "البنوك": [
+        "البنوك",
+        "الحركات البنكية"
+    ],
+    "المصروفات": [
+        "المصروفات"
+    ],
+    "المسودة": [
+        "المسودة"
+    ],
+    "الإعدادات": [
+        "إدارة المستخدمين",
+        "إعدادات الشركة"
+    ]
+}
+
+LISTS = {
+    "payment_method": [
+        "كاش", "آجل", "على المبيع", "فاتورة + فاتورة"
+    ],
+    "due_type": [
+        "يوم من تاريخ الفاتورة",
+        "يوم من نهاية شهر الفاتورة",
+        "شهر"
+    ],
+    "receipt_status": [
+        "تم الاستلام",
+        "لم يتم الاستلام",
+        "مرتجع",
+        "مرتجع جزئى"
+    ],
+    "invoice_plus_invoice": ["لا", "نعم"],
+    "discount_type": ["نسبة مئوية", "مبلغ ثابت"],
+    "apply_discount": ["لا", "نعم"],
+    "collector_name": [
+        "محمد رمضان", "ايمن", "حماده",
+        "طارق", "مندوب مبيعات"
+    ],
+    "month": MONTHS,
+    "expense_group": [
+        "مصاريف الأستاذ",
+        "مصاريف الخزينة",
+        "سداد الافريقية"
+    ],
+    "expense_type": [
+        "بنزين", "مصاريف", "سداد الافريقية",
+        "وارد", "منصرف"
+    ],
+    "transaction_type": ["إيداع", "سحب"],
+    "conditions": [
+        "على المبيعات",
+        "على الشيك",
+        "مره واحده",
+        "شهرى",
+        "ربع سنوى",
+        "نصف سنوى",
+        "سنوى"
+    ]
+}
+
+EXTRAS = {
+    "sales": {
+        "due_date": "TEXT",
+        "payment_method": "TEXT",
+        "discount_note": "REAL",
+        "tax_amount": "REAL"
+    },
+    "returns": {
+        "due_date": "TEXT",
+        "tax_amount": "REAL"
+    },
+    "discounts": {
+        "discount_value": "REAL",
+        "tax_amount": "REAL"
+    }
+}
+
 
 def db():
-    c=sqlite3.connect(DB,timeout=30); c.row_factory=sqlite3.Row; return c
+    connection = sqlite3.connect(DB, timeout=30)
+    connection.row_factory = sqlite3.Row
+    return connection
 
-def read(sql,args=()):
-    c=db()
-    try: return pd.read_sql_query(sql,c,params=args)
-    finally: c.close()
 
-def write(sql,args=()):
-    c=db()
+def read(sql, arguments=()):
+    connection = db()
+
     try:
-        with c: c.execute(sql,args)
-    finally: c.close()
+        return pd.read_sql_query(
+            sql,
+            connection,
+            params=arguments
+        )
+    finally:
+        connection.close()
 
-def txt(v): return '' if v is None or pd.isna(v) else str(v).strip()
-def num(v): return float(txt(v).replace(',','') or 0)
-def digest(v): return hashlib.sha256(str(v).encode()).hexdigest()
+
+def write(sql, arguments=()):
+    connection = db()
+
+    try:
+        with connection:
+            connection.execute(sql, arguments)
+    finally:
+        connection.close()
+
+
+def txt(value):
+    if value is None or pd.isna(value):
+        return ""
+
+    return str(value).strip()
+
+
+def num(value):
+    return float(
+        txt(value).replace(",", "") or 0
+    )
+
+
+def digest(value):
+    return hashlib.sha256(
+        str(value).encode()
+    ).hexdigest()
+
 
 def initialize():
-    c=db()
+    connection = db()
+
     try:
-        with c:
-            c.executescript('''
-CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY,username TEXT UNIQUE,password_hash TEXT,full_name TEXT,role TEXT,company_id INTEGER,permissions TEXT,is_active INTEGER DEFAULT 1);
-CREATE TABLE IF NOT EXISTS companies(id INTEGER PRIMARY KEY,name TEXT,system_name TEXT,language TEXT,logo_path TEXT);
-CREATE TABLE IF NOT EXISTS page_permissions(user_id INTEGER,page TEXT,action TEXT,allowed INTEGER,PRIMARY KEY(user_id,page,action));
-CREATE TABLE IF NOT EXISTS audit_events(id INTEGER PRIMARY KEY,created_at TEXT DEFAULT CURRENT_TIMESTAMP,user_id INTEGER,action TEXT,details TEXT);
-''')
-            for p,(t,fs) in CONFIG.items():
-                c.execute(f'CREATE TABLE IF NOT EXISTS "{t}"(id INTEGER PRIMARY KEY AUTOINCREMENT,company_id INTEGER)')
-                existing={r['name'] for r in c.execute(f'PRAGMA table_info("{t}")')}
-                columns={n:'REAL' if k=='n' else 'TEXT' for n,l,k in fs}; columns['company_id']='INTEGER'; columns.update(EXTRAS.get(t,{}))
-                for n,k in columns.items():
-                    if n not in existing: c.execute(f'ALTER TABLE "{t}" ADD COLUMN "{n}" {k}')
-            c.execute('INSERT OR IGNORE INTO companies(id,name,system_name,language) VALUES(1,?,?,?)',('الشركة الرئيسية','نظام الحسابات والمبيعات','العربية'))
-            if c.execute('SELECT id FROM users WHERE username=? COLLATE NOCASE',('tarek',)).fetchone() is None:
-                c.execute('INSERT INTO users(username,password_hash,full_name,role,company_id,permissions,is_active) VALUES(?,?,?,?,?,?,1)',('tarek',digest('159019'),'طارق','super_admin',1,'ALL'))
-    finally: c.close()
+        with connection:
+            connection.executescript("""
+                CREATE TABLE IF NOT EXISTS users(
+                    id INTEGER PRIMARY KEY,
+                    username TEXT UNIQUE,
+                    password_hash TEXT,
+                    full_name TEXT,
+                    role TEXT,
+                    company_id INTEGER,
+                    permissions TEXT,
+                    is_active INTEGER DEFAULT 1
+                );
 
-def admin(): return st.session_state.user['role']=='super_admin'
-def can(p,a):
-    if admin(): return True
-    result=read('SELECT allowed FROM page_permissions WHERE user_id=? AND page=? AND action=?',(int(st.session_state.user['id']),p,a))
-    return not result.empty and bool(result.iloc[0]['allowed'])
-def require(p,a):
-    if not can(p,'view') or not can(p,a): raise ValueError('ليس لديك صلاحية هذه العملية')
-def data(p): return read(f'SELECT * FROM "{CONFIG[p][0]}" WHERE company_id=1 ORDER BY id DESC')
-def log(c,a,details): c.execute('INSERT INTO audit_events(user_id,action,details) VALUES(?,?,?)',(int(st.session_state.user['id']),a,json.dumps(details,ensure_ascii=False)))
+                CREATE TABLE IF NOT EXISTS companies(
+                    id INTEGER PRIMARY KEY,
+                    name TEXT,
+                    system_name TEXT,
+                    language TEXT,
+                    logo_path TEXT
+                );
 
-def choices(n,l):
-    found=read('SELECT DISTINCT value FROM dropdown_options WHERE company_id=1 AND field IN (?,?) ORDER BY id',(n,l))
-    return found.value.dropna().astype(str).tolist() if not found.empty else LISTS.get(n,[])
+                CREATE TABLE IF NOT EXISTS page_permissions(
+                    user_id INTEGER,
+                    page TEXT,
+                    action TEXT,
+                    allowed INTEGER,
+                    PRIMARY KEY(user_id, page, action)
+                );
 
-def picker(prefix,initial=''):
-    cs=data('العملاء'); mapping={str(r.customer_code):str(r.customer_name) for r in cs.itertuples()}
-    ck,nk=prefix+'_code',prefix+'_name'
-    if st.session_state.get(ck,'') not in mapping: st.session_state[ck]=''
-    if ck not in st.session_state: st.session_state[ck]=initial if initial in mapping else ''
-    if nk not in st.session_state or st.session_state[nk] not in mapping: st.session_state[nk]=st.session_state.get(ck,'')
-    def sync(a,b): st.session_state[b]=st.session_state[a]
-    left,right=st.columns(2)
-    left.selectbox('كود العميل',['']+list(mapping),key=ck,on_change=sync,args=(ck,nk))
-    right.selectbox('اسم العميل',['']+list(mapping),format_func=lambda x:f'{mapping[x]} — {x}' if x else 'اختر العميل',key=nk,on_change=sync,args=(nk,ck))
-    return st.session_state[ck],mapping.get(st.session_state[ck],'')
+                CREATE TABLE IF NOT EXISTS audit_events(
+                    id INTEGER PRIMARY KEY,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    user_id INTEGER,
+                    action TEXT,
+                    details TEXT
+                );
+            """)
 
-def prepare(p,v,rid=None):
-    v=dict(v)
-    for n,l,k in CONFIG[p][1]:
-        if k=='n': v[n]=num(v.get(n))
-        elif k=='d':
-            if not txt(v.get(n)): raise ValueError(l+' مطلوب')
-            v[n]=str(pd.Timestamp(v[n]).date())
-        else: v[n]=txt(v.get(n))
-    unique={'العملاء':'customer_code','المبيعات':'invoice_no','المرتجعات':'return_no','الموردين':'supplier_code','فواتير الموردين':'invoice_no'}.get(p)
-    if unique:
-        if not v[unique]: raise ValueError('الكود أو رقم المستند مطلوب')
-        duplicate=read(f'SELECT id FROM "{CONFIG[p][0]}" WHERE company_id=1 AND "{unique}"=? AND id<>?',(v[unique],int(rid or -1)))
-        if not duplicate.empty: raise ValueError('الكود أو رقم المستند موجود بالفعل')
-    if p=='العملاء' and not v['customer_name']: raise ValueError('اسم العميل مطلوب')
-    if p in CLIENT_PAGES:
-        cs=data('العملاء'); matches=cs[cs.customer_code.astype(str)==v['customer_code']] if v['customer_code'] else cs[cs.customer_name.astype(str)==v['customer_name']]
-        if len(matches)!=1: raise ValueError('العميل غير موجود أو الاسم متكرر؛ استخدم الكود')
-        customer=matches.iloc[0]
-        if v['customer_name'] and v['customer_name']!=txt(customer.customer_name): raise ValueError('اسم العميل لا يطابق الكود')
-        v.update(customer_code=str(customer.customer_code),customer_name=str(customer.customer_name))
-        if p=='المبيعات':
-            d=pd.Timestamp(v['invoice
+            for page, (table, fields) in CONFIG.items():
+                connection.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS "{table}"(
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        company_id INTEGER
+                    )
+                    """
+                )
+
+                existing = {
+                    row["name"]
+                    for row in connection.execute(
+                        f'PRAGMA table_info("{table}")'
+                    )
+                }
+
+                columns = {
+                    name: "REAL" if kind == "n" else "TEXT"
+                    for name, label, kind in fields
+                }
+
+                columns["company_id"] = "INTEGER"
+                columns.update(EXTRAS.get(table, {}))
+
+                for name, sql_type in columns.items():
+                    if name not in existing:
+                        connection.execute(
+                            f'ALTER TABLE "{table}" '
+                            f'ADD COLUMN "{name}" {sql_type}'
+                        )
+
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO companies
+                (id, name, system_name, language)
+                VALUES(1, ?, ?, ?)
+                """,
+                (
+                    "الشركة الرئيسية",
+                    "نظام الحسابات والمبيعات",
+                    "العربية"
+                )
+            )
+
+            user = connection.execute(
+                """
+                SELECT id FROM users
+                WHERE username = ? COLLATE NOCASE
+                """,
+                ("tarek",)
+            ).fetchone()
+
+            if user is None:
+                connection.execute(
+                    """
+                    INSERT INTO users(
+                        username,
+                        password_hash,
+                        full_name,
+                        role,
+                        company_id,
+                        permissions,
+                        is_active
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, 1)
+                    """,
+                    (
+                        "tarek",
+                        digest("159019"),
+                        "طارق",
+                        "super_admin",
+                        1,
+                        "ALL"
+                    )
+                )
+
+    finally:
+        connection.close()
+
+
+def admin():
+    return (
+        st.session_state.user["role"]
+        == "super_admin"
+    )
+
+
+def can(page, action):
+    if admin():
+        return True
+
+    result = read(
+        """
+        SELECT allowed
+        FROM page_permissions
+        WHERE user_id = ?
+          AND page = ?
+          AND action = ?
+        """,
+        (
+            int(st.session_state.user["id"]),
+            page,
+            action
+        )
+    )
+
+    return (
+        not result.empty
+        and bool(result.iloc[0]["allowed"])
+    )
+
+
+def require(page, action):
+    if (
+        not can(page, "view")
+        or not can(page, action)
+    ):
+        raise ValueError(
+            "ليس لديك صلاحية تنفيذ هذه العملية"
+        )
+
+
+def data(page):
+    table = CONFIG[page][0]
+
+    return read(
+        f"""
+        SELECT *
+        FROM "{table}"
+        WHERE company_id = 1
+        ORDER BY id DESC
+        """
+    )
+
+
+def audit(connection, action, details):
+    connection.execute(
+        """
+        INSERT INTO audit_events(
+            user_id, action, details
+        )
+        VALUES(?, ?, ?)
+        """,
+        (
+            int(st.session_state.user["id"]),
+            action,
+            json.dumps(
+                details,
+                ensure_ascii=False
+            )
+        )
+    )
+
+
+def choices(name, label):
+    found = read(
+        """
+        SELECT DISTINCT value
+        FROM dropdown_options
+        WHERE company_id = 1
+          AND field IN (?, ?)
+        ORDER BY id
+        """,
+        (name, label)
+    )
+
+    if not found.empty:
+        return (
+            found["value"]
+            .dropna()
+            .astype(str)
+            .tolist()
+        )
+
+    return list(LISTS.get(name, []))
+
+
+def picker(prefix, initial=""):
+    clients = data("العملاء")
+
+    mapping = {
+        str(row.customer_code):
+        str(row.customer_name)
+        for row in clients.itertuples()
+    }
+
+    code_key = prefix + "_code"
+    name_key = prefix + "_name"
+
+    if code_key not in st.session_state:
+        st.session_state[code_key] = (
+            initial if initial in mapping else ""
+        )
+
+    if st.session_state[code_key] not in mapping:
+        st.session_state[code_key] = ""
+
+    if name_key not in st.session_state:
+        st.session_state[name_key] = (
+            st.session_state[code_key]
+        )
+
+    if st.session_state[name_key] not in mapping:
+        st.session_state[name_key] = (
+            st.session_state[code_key]
+        )
+
+    def sync(source, target):
+        st.session_state[target] = (
+            st.session_state[source]
+        )
+
+    left, right = st.columns(2)
+
+    left.selectbox(
+        "كود العميل",
+        [""] + list(mapping),
+        key=code_key,
+        on_change=sync,
+        args=(code_key, name_key)
+    )
+
+    right.selectbox(
+        "اسم العميل",
+        [""] + list(mapping),
+        format_func=lambda value: (
+            f"{mapping[value]} — {value}"
+            if value else "اختر العميل"
+        ),
+        key=name_key,
+        on_change=sync,
+        args=(name_key, code_key)
+    )
+
+    code = st.session_state[code_key]
+
+    return code, mapping.get(code, "")
+
+
+def prepare(page, values, record_id=None):
+    values = dict(values)
+
+    for name, label, kind in CONFIG[page][1]:
+        value = values.get(name)
+
+        if kind == "n":
+            values[name] = num(value)
+
+        elif kind == "d":
+            if not txt(value):
+                raise ValueError(
+                    f"{label}: التاريخ مطلوب"
+                )
+
+            values[name] = str(
+                pd.Timestamp(value).date()
+            )
+
+        else:
+            values[name] = txt(value)
+
+    unique_field = {
+        "العملاء": "customer_code",
+        "المبيعات": "invoice_no",
+        "المرتجعات": "return_no",
+        "الموردين": "supplier_code",
+        "فواتير الموردين": "invoice_no"
+    }.get(page)
+
+    if unique_field:
+        if not values[unique_field]:
+            raise ValueError(
+                "الكود أو رقم المستند مطلوب"
+            )
+
+        table = CONFIG[page][0]
+
+        duplicate = read(
+            f"""
+            SELECT id
+            FROM "{table}"
+            WHERE company_id = 1
+              AND "{unique_field}" = ?
+              AND id <> ?
+            """,
+            (
+                values[unique_field],
+                int(record_id or -1)
+            )
+        )
+
+        if not duplicate.empty:
+            raise ValueError(
+                "الكود أو رقم المستند موجود بالفعل"
+            )
+
+    if (
+        page == "العملاء"
+        and not values["customer_name"]
+    ):
+        raise ValueError(
+            "اسم العميل مطلوب"
+        )
+
+    if page in CLIENT_PAGES:
+        clients = data("العملاء")
+        code = values["customer_code"]
+        name = values["customer_name"]
+
+        if code:
+            matches = clients[
+                clients["customer_code"].astype(str)
+                == code
+            ]
+        else:
+            matches = clients[
+                clients["customer_name"].astype(str)
+                == name
+            ]
+
+        if len(matches) != 1:
+            raise ValueError(
+                "العميل غير موجود أو الاسم متكرر؛ "
+                "استخدم كود العميل"
+            )
+
+        customer = matches.iloc[0]
+
+        if (
+            name
+            and name != txt(customer["customer_name"])
+        ):
+            raise ValueError(
+                "اسم العميل لا يطابق الكود"
+            )
+
+        values["customer_code"] = str(
+            customer["customer_code"]
+        )
+
+        values["customer_name"] = str(
+            customer["customer_name"]
+        )
+
+        if page == "المبيعات":
+            invoice_date = pd.Timestamp(
+                values["invoice_date"]
+            )
+
+            due_days = int(
+                num(customer["due_days"])
+            )
+
+            method = txt(
+                customer["payment_method"]
+            )
+
+            due_type = txt(
+                customer["due_type"]
+            )
+
+            if method in (
+                "على المبيع",
+                "فاتورة + فاتورة"
+            ):
+                due = method
+
+            elif method == "كاش":
+                due = str(
+                    (
+                        invoice_date
+                        + pd.Timedelta(days=1)
+                    ).date()
+                )
+
+            elif "نهاية" in due_type:
+                due = str(
+                    (
+                        invoice_date.replace(day=1)
+                        + pd.DateOffset(months=1)
+                        + pd.Timedelta(days=due_days)
+                    ).date()
+                )
+
+            elif due_type == "شهر":
+                due = str(
+                    (
+                        invoice_date
+                        + pd.DateOffset(
+                            months=due_days
+                        )
+                    ).date()
+                )
+
+            else:
+                due = str(
+                    (
+                        invoice_date
+                        + pd.Timedelta(
+                            days=due_days
+                        )
+                    ).date()
+                )
+
+            values.update(
+                due_date=due,
+                payment_method=method,
+                tax_amount=(
+                    values["invoice_total"]
+                    - values["before_tax"]
+                ),
+                discount_note=(
+                    values["before_tax"] * 0.01
+                )
+            )
+
+        if page in (
+            "المرتجعات",
+            "التحصيلات",
+            "الخصومات"
+        ):
+            invoice_no = values.get(
+                "original_invoice_no",
+                values.get("invoice_no", "")
+            )
+
+            if invoice_no:
+                invoice = read(
+                    """
+                    SELECT id
+                    FROM sales
+                    WHERE company_id = 1
+                      AND invoice_no = ?
+                      AND customer_code = ?
+                    """,
+                    (
+                        invoice_no,
+                        values["customer_code"]
+                    )
+                )
+
+                if invoice.empty:
+                    raise ValueError(
+                        "الفاتورة غير مسجلة لهذا العميل"
+                    )
+
+            elif page != "الخصومات":
+                raise ValueError(
+                    "رقم الفاتورة مطلوب"
+                )
+
+    if page == "المرتجعات":
+        values.update(
+            due_date=str(
+                (
+                    pd.Timestamp(
+                        values["return_date"]
+                    )
+                    + pd.Timedelta(days=1)
+                ).date()
+            ),
+            tax_amount=(
+                values["return_total"]
+                - values["before_tax"]
+            )
+        )
+
+    if page == "الخصومات":
+        if (
+            values["discount_type"]
+            == "نسبة مئوية"
+        ):
+            discount_value = (
+                values["invoice_total"]
+                * values["discount_percent"]
+                / 100
+            )
+        else:
+            discount_value = (
+                values["fixed_amount"]
+            )
+
+        values.update(
+            discount_value=discount_value,
+            tax_amount=(
+                values["invoice_total"]
+                - values["before_tax"]
+            )
+        )
+
+    if page in ("العروض", "خصومات العقد"):
+        if (
+            values["end_date"]
+            < values["start_date"]
+        ):
+            raise ValueError(
+                "تاريخ النهاية يسبق تاريخ البداية"
+            )
+
+    return values
+
+
+def save(
+    page,
+    values,
+    record_id=None,
+    importing=False
+):
+    action = (
+        "import" if importing
+        else "edit" if record_id
+        else "add"
+    )
+
+    require(page, action)
+
+    values = prepare(
+        page,
+        values,
+        record_id
+    )
+
+    table = CONFIG[page][0]
+    connection = db()
+
+    try:
+        with connection:
+            if record_id:
+                assignments = ", ".join(
+                    f'"{name}" = ?'
+                    for name in values
+                )
+
+                connection.execute(
+                    f"""
+                    UPDATE "{table}"
+                    SET {assignments}
+                    WHERE company_id = 1
+                      AND id = ?
+                    """,
+                    list(values.values())
+                    + [int(record_id)]
+                )
+
+            else:
+                columns = ", ".join(
+                    f'"{name}"'
+                    for name in values
+                )
+
+                marks = ", ".join(
+                    "?" for _ in values
+                )
+
+                connection.execute(
+                    f"""
+                    INSERT INTO "{table}"(
+                        company_id, {columns}
+                    )
+                    VALUES(1, {marks})
+                    """,
+                    list(values.values())
+                )
+
+            audit(
+                connection,
+                action,
+                {
+                    "page": page,
+                    "id": record_id
+                }
+            )
+
+    finally:
+        connection.close()
+
+
+def refresh():
+    st.session_state["revision"] = (
+        st.session_state.get("revision", 0)
+        + 1
+    )
+
+    st.session_state.pop("editing", None)
+    st.rerun()
+
+
+def record_form(page, row=None):
+    record_id = (
+        int(row["id"])
+        if row is not None
+        else None
+    )
+
+    prefix = (
+        f"{page}_{record_id or 'new'}"
+    )
+
+    values = {}
+
+    if page in CLIENT_PAGES:
+        initial = (
+            txt(row["customer_code"])
+            if record_id else ""
+        )
+
+        code, name = picker(
+            prefix,
+            initial
+        )
+
+        values["customer_code"] = code
+        values["customer_name"] = name
+
+    with st.form("form_" + prefix):
+        columns = st.columns(3)
+
+        for index, field in enumerate(
+            CONFIG[page][1]
+        ):
+            name, label, kind = field
+
+            if name in values:
+                continue
+
+            old_value = (
+                row.get(name)
+                if record_id else None
+            )
+
+            container = columns[index % 3]
+            key = prefix + "_" + name
+
+            if kind == "n":
+                default = num(old_value)
+
+                if (
+                    name == "year"
+                    and not txt(old_value)
+                ):
+                    default = float(
+                        date.today().year
+                    )
+
+                values[name] = (
+                    container.number_input(
+                        label,
+                        value=default,
+                        key=key
+                    )
+                )
+
+            elif kind == "d":
+                try:
+                    default = (
+                        pd.Timestamp(
+                            old_value
+                        ).date()
+                        if txt(old_value)
+                        else date.today()
+                    )
+                except (
+                    ValueError,
+                    TypeError
+                ):
+                    default = date.today()
+
+                values[name] = str(
+                    container.date_input(
+                        label,
+                        value=default,
+                        key=key
+                    )
+                )
+
+            else:
+                options = (
+                    choices(name, label)
+                    if page != "المسودة"
+                    else []
+                )
+
+                if options:
+                    old_text = txt(old_value)
+
+                    if (
+                        old_text
+                        and old_text not in options
+                    ):
+                        options = (
+                            [old_text] + options
+                        )
+
+                    selected_index = (
+                        options.index(old_text)
+                        if old_text in options
+                        else 0
+                    )
+
+                    values[name] = (
+                        container.selectbox(
+                            label,
+                            options,
+                            index=selected_index,
+                            key=key
+                        )
+                    )
+
+                else:
+                    values[name] = (
+                        container.text_input(
+                            label,
+                            value=txt(old_value),
+                            key=key
+                        )
+                    )
+
+        submitted = st.form_submit_button(
+            "حفظ التعديل"
+            if record_id else "إضافة"
+        )
+
+    if submitted:
+        try:
+            save(
+                page,
+                values,
+                record_id
+            )
+
+        except (
+            ValueError,
+            TypeError,
+            sqlite3.Error
+        ) as error:
+            st.error(str(error))
+
+        else:
+            refresh()
+
+
+def excel_bytes(frame):
+    buffer = io.BytesIO()
+
+    with pd.ExcelWriter(
+        buffer,
+        engine="xlsxwriter"
+    ) as writer:
+        frame.to_excel(
+            writer,
+            index=False,
+            sheet_name="Data"
+        )
+
+        sheet = writer.sheets["Data"]
+        sheet.right_to_left()
+        sheet.freeze_panes(1, 0)
+
+        sheet.set_column(
+            0,
+            max(len(frame.columns) - 1, 0),
+            24
+        )
+
+    return buffer.getvalue()
+
+
+def download(frame, key):
+    st.download_button(
+        "تحميل Excel",
+        data=excel_bytes(frame),
+        file_name=f"{key}.xlsx",
+        mime=(
+            "application/vnd.openxmlformats-"
+            "officedocument.spreadsheetml.sheet"
+        ),
+        key="download_" + key
+    )
+
+
+def import_page(page):
+    fields = CONFIG[page][1]
+
+    headers = [
+        label
+        for name, label, kind in fields
+    ]
+
+    if can(page, "export"):
+        download(
+            pd.DataFrame(columns=headers),
+            "template_" + CONFIG[page][0]
+        )
+
+    if not can(page, "import"):
+        return
+
+    uploaded = st.file_uploader(
+        "رفع Excel",
+        type=["xlsx"],
+        key="file_" + page
+    )
+
+    if uploaded is None:
+        return
+
+    try:
+        incoming = pd.read_excel(
+            uploaded,
+            dtype=str
+        ).fillna("")
+
+        incoming.columns = [
+            str(column).strip()
+            for column in incoming.columns
+        ]
+
+    except Exception as error:
+        st.error(
+            f"تعذرت قراءة الملف: {error}"
+        )
+        return
+
+    if (
+        incoming.columns.duplicated().any()
+        or set(incoming.columns)
+        != set(headers)
+    ):
+        missing = (
+            set(headers)
+            - set(incoming.columns)
+        )
+
+        extra = (
+            set(incoming.columns)
+            - set(headers)
+        )
+
+        st.error(
+            "الأعمدة لا تطابق القالب."
+        )
+
+        if missing:
+            st.write(
+                "الأعمدة الناقصة:",
+                sorted(missing)
+            )
+
+        if extra:
+            st.write(
+                "الأعمدة الإضافية:",
+                sorted(extra)
+            )
+
+        st.info(
+            "استخدم قالب هذه الصفحة "
+            "دون تغيير عناوينه."
+        )
+        return
+
+    st.dataframe(
+        incoming.head(20),
+        use_container_width=True
+    )
+
+    if st.button(
+        "استيراد فعلي",
+        key="import_" + page
+    ):
+        count = 0
+        errors = []
+
+        for index, row in incoming.iterrows():
+            if all(
+                txt(value) == ""
+                for value in row
+            ):
+                continue
+
+            try:
+                values = {
+                    name: row[label]
+                    for name, label, kind
+                    in fields
+                }
+
+                save(
+                    page,
+                    values,
+                    importing=True
+                )
+
+                count += 1
+
+            except (
+                ValueError,
+                TypeError,
+                sqlite3.Error
+            ) as error:
+                errors.append(
+                    {
+                        "صف Excel": index + 2,
+                        "السبب": str(error)
+                    }
+                )
+
+        st.success(
+            f"تم حفظ {count} صف فعلياً"
+        )
+
+        if errors:
+            errors_frame = pd.DataFrame(
+                errors
+            )
+
+            st.warning(
+                f"لم يتم حفظ {len(errors)} صف"
+            )
+
+            st.dataframe(
+                errors_frame,
+                use_container_width=True
+            )
+
+            download(
+                errors_frame,
+                "import_errors"
+            )
+
+
+def remaining(connection, invoice):
+    returns_total = connection.execute(
+        """
+        SELECT COALESCE(
+            SUM(return_total), 0
+        )
+        FROM returns
+        WHERE company_id = 1
+          AND original_invoice_no = ?
+        """,
+        (invoice["invoice_no"],)
+    ).fetchone()[0]
+
+    paid_total = connection.execute(
+        """
+        SELECT COALESCE(
+            SUM(amount), 0
+        )
+        FROM collections
+        WHERE company_id = 1
+          AND invoice_no = ?
+        """,
+        (invoice["invoice_no"],)
+    ).fetchone()[0]
+
+    return max(
+        num(invoice["invoice_total"])
+        - num(returns_total)
+        - num(paid_total),
+        0
+    )
+
+
+def bulk_action(
+    page,
+    record_ids,
+    action,
+    options=None
+):
+    require(page, action)
+
+    options = options or {}
+    table = CONFIG[page][0]
+    connection = db()
+
+    try:
+        with connection:
+            for record_id in record_ids:
+                row = connection.execute(
+                    f"""
+                    SELECT *
+                    FROM "{table}"
+                    WHERE company_id = 1
+                      AND id = ?
+                    """,
+                    (int(record_id),)
+                ).fetchone()
+
+                if row is None:
+                    raise ValueError(
+                        "أحد السجلات لم يعد موجوداً"
+                    )
+
+                if action == "delete":
+                    if page == "العملاء":
+                        child_tables = [
+                            "sales",
+                            "returns",
+                            "collections",
+                            "discounts",
+                            "magazines",
+                            "offers",
+                            "contract_discounts"
+                        ]
+
+                        for child in child_tables:
+                            linked = (
+                                connection.execute(
+                                    f"""
+                                    SELECT id
+                                    FROM "{child}"
+                                    WHERE company_id = 1
+                                      AND customer_code = ?
+                                    LIMIT 1
+                                    """,
+                                    (
+                                        row[
+                                            "customer_code"
+                                        ],
+                                    )
+                                ).fetchone()
+                            )
+
+                            if linked:
+                                raise ValueError(
+                                    "العميل مرتبط بحركات؛ "
+                                    "عالج الحركات أولاً"
+                                )
+
+                    if page == "المبيعات":
+                        child_links = [
+                            (
+                                "returns",
+                                "original_invoice_no"
+                            ),
+                            (
+                                "collections",
+                                "invoice_no"
+                            ),
+                            (
+                                "discounts",
+                                "invoice_no"
+                            )
+                        ]
+
+                        for child, column in child_links:
+                            linked = (
+                                connection.execute(
+                                    f"""
+                                    SELECT id
+                                    FROM "{child}"
+                                    WHERE company_id = 1
+                                      AND "{column}" = ?
+                                    LIMIT 1
+                                    """,
+                                    (
+                                        row["invoice_no"],
+                                    )
+                                ).fetchone()
+                            )
+
+                            if linked:
+                                raise ValueError(
+                                    "الفاتورة مرتبطة "
+                                    "بحركات؛ عالجها أولاً"
+                                )
+
+                    connection.execute(
+                        f"""
+                        DELETE FROM "{table}"
+                        WHERE company_id = 1
+                          AND id = ?
+                        """,
+                        (int(record_id),)
+                    )
+
+                elif (
+                    action == "receive"
+                    and page == "المبيعات"
+                ):
+                    connection.execute(
+                        """
+                        UPDATE sales
+                        SET receipt_status = ?
+                        WHERE company_id = 1
+                          AND id = ?
+                        """,
+                        (
+                            options["status"],
+                            int(record_id)
+                        )
+                    )
+
+                elif (
+                    action == "settle"
+                    and page == "المبيعات"
+                ):
+                    require(
+                        "التحصيلات",
+                        "add"
+                    )
+
+                    amount = remaining(
+                        connection,
+                        row
+                    )
+
+                    payment_date = (
+                        options["date"]
+                    )
+
+                    if amount > 0.005:
+                        connection.execute(
+                            """
+                            INSERT INTO collections(
+                                company_id,
+                                collection_date,
+                                customer_code,
+                                customer_name,
+                                invoice_no,
+                                amount,
+                                collector_name,
+                                month,
+                                year,
+                                notes
+                            )
+                            VALUES(
+                                1, ?, ?, ?, ?,
+                                ?, ?, ?, ?, ?
+                            )
+                            """,
+                            (
+                                str(payment_date),
+                                row["customer_code"],
+                                row["customer_name"],
+                                row["invoice_no"],
+                                amount,
+                                options["collector"],
+                                MONTHS[
+                                    payment_date.month - 1
+                                ],
+                                payment_date.year,
+                                "سداد جماعي"
+                            )
+                        )
+
+                else:
+                    raise ValueError(
+                        "الإجراء غير متاح"
+                    )
+
+            audit(
+                connection,
+                action,
+                {
+                    "page": page,
+                    "ids": [
+                        int(value)
+                        for value in record_ids
+                    ]
+                }
+            )
+
+    finally:
+        connection.close()
+
+
+def grid(page):
+    frame = data(page)
+    table, fields = CONFIG[page]
+
+    search = st.text_input(
+        "بحث",
+        key="search_" + page
+    )
+
+    if search:
+        mask = frame.astype(str).apply(
+            lambda column: (
+                column.str.contains(
+                    search,
+                    regex=False,
+                    case=False,
+                    na=False
+                )
+            )
+        ).any(axis=1)
+
+        frame = frame[mask]
+
+    labels = {
+        name: label
+        for name, label, kind in fields
+    }
+
+    labels.update(
+        {
+            "id": "م",
+            "due_date": "تاريخ الاستحقاق",
+            "payment_method": "طريقة الدفع",
+            "tax_amount": "مبلغ الضريبة",
+            "discount_note": "إشعار خصم 1%",
+            "discount_value": "قيمة الخصم"
+        }
+    )
+
+    shown = (
+        frame.drop(
+            columns=["company_id"],
+            errors="ignore"
+        )
+        .rename(columns=labels)
+    )
+
+    if (
+        page == "المبيعات"
+        and not frame.empty
+    ):
+        connection = db()
+
+        try:
+            shown["المتبقي المحسوب"] = [
+                remaining(connection, row)
+                for _, row
+                in frame.iterrows()
+            ]
+        finally:
+            connection.close()
+
+    if can(page, "export"):
+        download(
+            shown,
+            "data_" + table
+        )
+
+    if frame.empty:
+        st.info("لا توجد بيانات")
+        return
+
+    state = st.session_state.setdefault(
+        "select_" + page,
+        {
+            "ids": [],
+            "manual": [],
+            "phase": 0,
+            "revision": 0
+        }
+    )
+
+    cycle_labels = [
+        "تحديد الكل (نتائج البحث)",
+        "العودة للتحديد السابق",
+        "إلغاء جميع التحديد"
+    ]
+
+    if st.button(
+        cycle_labels[state["phase"]],
+        key="cycle_" + page
+    ):
+        if state["phase"] == 0:
+            state["manual"] = (
+                state["ids"][:]
+            )
+
+            state["ids"] = [
+                int(value)
+                for value in frame["id"]
+            ]
+
+            state["phase"] = 1
+
+        elif state["phase"] == 1:
+            state["ids"] = (
+                state["manual"][:]
+            )
+
+            state["phase"] = 2
+
+        else:
+            state["ids"] = []
+            state["manual"] = []
+            state["phase"] = 0
+
+        state["revision"] += 1
+
+    model = shown.copy()
+
+    model.insert(
+        0,
+        "تحديد",
+        frame["id"].astype(int).isin(
+            state["ids"]
+        ).to_numpy()
+    )
+
+    model["إجراء"] = ""
+
+    row_options = [""]
+
+    if can(page, "edit"):
+        row_options.append("تعديل")
+
+    if can(page, "delete"):
+        row_options.append("حذف")
+
+    grid_key = (
+        f"grid_{page}_"
+        f"{state['revision']}_"
+        f"{st.session_state.get('revision', 0)}"
+    )
+
+    edited = st.data_editor(
+        model,
+        hide_index=True,
+        use_container_width=True,
+        disabled=[
+            column
+            for column in model.columns
+            if column not in (
+                "تحديد", "إجراء"
+            )
+        ],
+        column_config={
+            "تحديد": (
+                st.column_config.CheckboxColumn(
+                    "تحديد"
+                )
+            ),
+            "إجراء": (
+                st.column_config.SelectboxColumn(
+                    "إجراء",
+                    options=row_options
+                )
+            )
+        },
+        key=grid_key
+    )
+
+    state["ids"] = [
+        int(value)
+        for value in edited.loc[
+            edited["تحديد"], "م"
+        ]
+    ]
+
+    requested = edited[
+        edited["إجراء"] != ""
+    ]
+
+    if len(requested) > 1:
+        st.info(
+            "اختر إجراء صف واحد، "
+            "أو استخدم الإجراءات الجماعية."
+        )
+
+    elif len(requested) == 1:
+        item = requested.iloc[0]
+        record_id = int(item["م"])
+
+        if item["إجراء"] == "تعديل":
+            st.session_state.editing = (
+                page,
+                record_id
+            )
+
+        elif st.button(
+            f"تأكيد حذف السجل {record_id}",
+            key="row_delete_" + page
+        ):
+            try:
+                bulk_action(
+                    page,
+                    [record_id],
+                    "delete"
+                )
+
+            except (
+                ValueError,
+                sqlite3.Error
+            ) as error:
+                st.error(str(error))
+
+            else:
+                state["revision"] += 1
+                refresh()
+
+    editing = st.session_state.get(
+        "editing",
+        (None, None)
+    )
+
+    if editing[0] == page:
+        record_id = editing[1]
+
+        match = frame[
+            frame["id"] == record_id
+        ]
+
+        if not match.empty:
+            st.subheader(
+                f"تعديل السجل {record_id}"
+            )
+
+            record_form(
+                page,
+                match.iloc[0]
+            )
+
+            if st.button(
+                "إلغاء التعديل",
+                key="cancel_edit_" + page
+            ):
+                state["revision"] += 1
+                refresh()
+
+    selected_ids = state["ids"]
+
+    if not selected_ids:
+        return
+
+    with st.expander(
+        (
+            "إعدادات وإجراءات المحدد — "
+            f"{len(selected_ids)} سجل"
+        ),
+        expanded=True
+    ):
+        operations = {}
+        options = {}
+
+        if can(page, "delete"):
+            operations[
+                "حذف المحدد"
+            ] = "delete"
+
+        if (
+            page == "المبيعات"
+            and can(page, "receive")
+        ):
+            operations[
+                "تغيير حالة الاستلام"
+            ] = "receive"
+
+        if (
+            page == "المبيعات"
+            and can(page, "settle")
+            and can("التحصيلات", "add")
+        ):
+            operations[
+                "سداد المتبقي بالكامل"
+            ] = "settle"
+
+        if not operations:
+            st.info(
+                "لا توجد عمليات جماعية "
+                "مصرح بها لهذا الحساب."
+            )
+            return
+
+        title = st.selectbox(
+            "الإجراء",
+            list(operations),
+            key="bulk_operation_" + page
+        )
+
+        action = operations[title]
+
+        if action == "receive":
+            options["status"] = (
+                st.selectbox(
+                    "حالة الاستلام الجديدة",
+                    LISTS["receipt_status"]
+                )
+            )
+
+        if action == "settle":
+            options["date"] = (
+                st.date_input(
+                    "تاريخ السداد"
+                )
+            )
+
+            options["collector"] = (
+                st.text_input(
+                    "المحصل",
+                    value="طارق"
+                )
+            )
+
+            st.caption(
+                "السداد يحسب الإجمالي "
+                "ناقص المرتجعات والتحصيلات. "
+                "لا يخصص خصومات العميل "
+                "أو المجلات على الفواتير."
+            )
+
+        confirmed = st.checkbox(
+            (
+                f"أوافق على {title} "
+                f"لعدد {len(selected_ids)} سجل"
+            ),
+            key="bulk_confirm_" + page
+        )
+
+        if st.button(
+            "تنفيذ على المحدد",
+            disabled=not confirmed,
+            key="bulk_execute_" + page
+        ):
+            try:
+                bulk_action(
+                    page,
+                    selected_ids,
+                    action,
+                    options
+                )
+
+            except (
+                ValueError,
+                sqlite3.Error
+            ) as error:
+                st.error(str(error))
+
+            else:
+                state.update(
+                    ids=[],
+                    manual=[],
+                    phase=0,
+                    revision=(
+                        state["revision"] + 1
+                    )
+                )
+
+                refresh()
+
+
+def users_page():
+    if not admin():
+        st.error(
+            "إدارة المستخدمين "
+            "للحساب الأساسي فقط."
+        )
+        return
+
+    users = read(
+        """
+        SELECT
+            id, username, full_name,
+            role, is_active
+        FROM users
+        ORDER BY id
+        """
+    )
+
+    st.dataframe(
+        users,
+        use_container_width=True
+    )
+
+    with st.form("new_user"):
+        username = st.text_input(
+            "اسم المستخدم الجديد"
+        )
+
+        full_name = st.text_input(
+            "الاسم الكامل"
+        )
+
+        password = st.text_input(
+            "كلمة المرور",
+            type="password"
+        )
+
+        submitted = st.form_submit_button(
+            "إنشاء حساب بلا صلاحيات"
+        )
+
+    if submitted:
+        if (
+            not username.strip()
+            or not password
+        ):
+            st.error(
+                "اسم المستخدم "
+                "وكلمة المرور مطلوبان."
+            )
+
+        else:
+            existing = read(
+                """
+                SELECT id FROM users
+                WHERE username = ?
+                COLLATE NOCASE
+                """,
+                (username.strip(),)
+            )
+
+            if not existing.empty:
+                st.error(
+                    "اسم المستخدم موجود."
+                )
+
+            else:
+                write(
+                    """
+                    INSERT INTO users(
+                        username,
+                        password_hash,
+                        full_name,
+                        role,
+                        company_id,
+                        permissions,
+                        is_active
+                    )
+                    VALUES(
+                        ?, ?, ?, ?,
+                        1, ?, 1
+                    )
+                    """,
+                    (
+                        username.strip(),
+                        digest(password),
+                        full_name,
+                        "user",
+                        ""
+                    )
+                )
+
+                refresh()
+
+    user_id = st.selectbox(
+        "الحساب لتعديل صلاحياته",
+        users["id"].tolist(),
+        format_func=lambda value: str(
+            users.loc[
+                users["id"] == value,
+                "username"
+            ].iloc[0]
+        )
+    )
+
+    user = users[
+        users["id"] == user_id
+    ].iloc[0]
+
+    if user["role"] == "super_admin":
+        st.info(
+            "الحساب الأساسي له جميع الصلاحيات، "
+            "ومحمي من الحذف والتعطيل هنا."
+        )
+
+        with st.form("admin_password"):
+            replacement = st.text_input(
+                "كلمة مرور جديدة للحساب الأساسي",
+                type="password"
+            )
+
+            update_password = (
+                st.form_submit_button(
+                    "تغيير كلمة المرور"
+                )
+            )
+
+        if update_password:
+            if not replacement:
+                st.error(
+                    "أدخل كلمة المرور الجديدة."
+                )
+            else:
+                write(
+                    """
+                    UPDATE users
+                    SET password_hash = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        digest(replacement),
+                        int(user_id)
+                    )
+                )
+
+                st.success(
+                    "تم تغيير كلمة المرور."
+                )
+
+        return
+
+    saved = read(
+        """
+        SELECT *
+        FROM page_permissions
+        WHERE user_id = ?
+        """,
+        (int(user_id),)
+    )
+
+    lookup = {
+        (row.page, row.action):
+        bool(row.allowed)
+        for row in saved.itertuples()
+    }
+
+    matrix = pd.DataFrame(
+        [
+            {
+                "الصفحة": page,
+                **{
+                    label: lookup.get(
+                        (page, action),
+                        False
+                    )
+                    for action, label
+                    in ACTIONS.items()
+                }
+            }
+            for page in PAGES
+        ]
+    )
+
+    st.caption(
+        "إلغاء عرض يمنع الدخول وكل العمليات. "
+        "السداد وتغيير الاستلام "
+        "يطبقان على المبيعات فقط."
+    )
+
+    edited = st.data_editor(
+        matrix,
+        disabled=["الصفحة"],
+        hide_index=True,
+        use_container_width=True,
+        key=f"permissions_{user_id}"
+    )
+
+    active = st.checkbox(
+        "حساب مفعّل",
+        value=bool(user["is_active"]),
+        key=f"active_{user_id}"
+    )
+
+    new_password = st.text_input(
+        "كلمة مرور بديلة (اختياري)",
+        type="password",
+        key=f"password_{user_id}"
+    )
+
+    if st.button(
+        "حفظ الصلاحيات",
+        key="save_permissions"
+    ):
+        connection = db()
+
+        try:
+            with connection:
+                for _, row in edited.iterrows():
+                    for action, label in ACTIONS.items():
+                        permitted = (
+                            bool(row[label])
+                            and bool(row["عرض"])
+                        )
+
+                        connection.execute(
+                            """
+                            INSERT OR REPLACE
+                            INTO page_permissions(
+                                user_id,
+                                page,
+                                action,
+                                allowed
+                            )
+                            VALUES(?, ?, ?, ?)
+                            """,
+                            (
+                                int(user_id),
+                                row["الصفحة"],
+                                action,
+                                int(permitted)
+                            )
+                        )
+
+                connection.execute(
+                    """
+                    UPDATE users
+                    SET is_active = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        int(active),
+                        int(user_id)
+                    )
+                )
+
+                if new_password:
+                    connection.execute(
+                        """
+                        UPDATE users
+                        SET password_hash = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            digest(new_password),
+                            int(user_id)
+                        )
+                    )
+
+                audit(
+                    connection,
+                    "permissions",
+                    {
+                        "user_id": int(
+                            user_id
+                        )
+                    }
+                )
+
+        finally:
+            connection.close()
+
+        st.success(
+            "تم حفظ الصلاحيات."
+        )
+
+    confirm_delete = st.checkbox(
+        "تأكيد حذف هذا المستخدم",
+        key=f"delete_user_confirm_{user_id}"
+    )
+
+    if st.button(
+        "حذف المستخدم",
+        disabled=not confirm_delete
+    ):
+        connection = db()
+
+        try:
+            with connection:
+                connection.execute(
+                    """
+                    DELETE FROM page_permissions
+                    WHERE user_id = ?
+                    """,
+                    (int(user_id),)
+                )
+
+                connection.execute(
+                    """
+                    DELETE FROM users
+                    WHERE id = ?
+                    """,
+                    (int(user_id),)
+                )
+
+        finally:
+            connection.close()
+
+        refresh()
+
+
+def reports(page):
+    sources = [
+        "العملاء",
+        "المبيعات",
+        "المرتجعات",
+        "التحصيلات",
+        "الخصومات",
+        "المجلات"
+    ]
+
+    if not all(
+        can(source, "view")
+        for source in sources
+    ):
+        st.warning(
+            "التقرير يحتاج صلاحية "
+            "عرض جميع مصادره."
+        )
+        return
+
+    clients = data("العملاء")
+
+    if page == "كشف الحساب":
+        code, name = picker("report")
+
+        if not code:
+            return
+
+        left, right = st.columns(2)
+
+        start = left.date_input(
+            "من تاريخ",
+            value=date(2024, 1, 1)
+        )
+
+        end = right.date_input(
+            "إلى تاريخ",
+            value=date.today()
+        )
+
+        if end < start:
+            st.error(
+                "الفترة غير صحيحة."
+            )
+            return
+
+        customer = clients[
+            clients["customer_code"].astype(str)
+            == code
+        ].iloc[0]
+
+        balance = num(
+            customer["opening_balance"]
+        )
+
+        movements = []
+
+        movement_sources = [
+            (
+                "المبيعات",
+                "invoice_date",
+                "invoice_total",
+                1,
+                "invoice_no"
+            ),
+            (
+                "المرتجعات",
+                "return_date",
+                "return_total",
+                -1,
+                "return_no"
+            ),
+            (
+                "التحصيلات",
+                "collection_date",
+                "amount",
+                -1,
+                "invoice_no"
+            ),
+            (
+                "الخصومات",
+                "discount_date",
+                "discount_value",
+                -1,
+                "invoice_no"
+            )
+        ]
+
+        for (
+            source,
+            date_column,
+            amount_column,
+            sign,
+            reference_column
+        ) in movement_sources:
+            frame = data(source)
+
+            frame = frame[
+                frame["customer_code"].astype(str)
+                == code
+            ]
+
+            for _, row in frame.iterrows():
+                parsed = pd.to_datetime(
+                    row[date_column],
+                    errors="coerce"
+                )
+
+                if pd.isna(parsed):
+                    continue
+
+                movements.append(
+                    {
+                        "date": parsed.date(),
+                        "type": source,
+                        "reference": txt(
+                            row.get(reference_column)
+                        ),
+                        "value": (
+                            sign
+                            * num(
+                                row.get(
+                                    amount_column
+                                )
+                            )
+                        )
+                    }
+                )
+
+        magazines = data("المجلات")
+
+        magazines = magazines[
+            magazines["customer_code"].astype(str)
+            == code
+        ]
+
+        for _, row in magazines.iterrows():
+            month = txt(row["month"])
+            year = int(num(row["year"]))
+
+            if month in MONTHS and year:
+                movements.append(
+                    {
+                        "date": date(
+                            year,
+                            MONTHS.index(month) + 1,
+                            1
+                        ),
+                        "type": "المجلات",
+                        "reference": txt(
+                            row["magazine_type"]
+                        ),
+                        "value": -num(
+                            row["discount_value"]
+                        )
+                    }
+                )
+
+        balance += sum(
+            movement["value"]
+            for movement in movements
+            if movement["date"] < start
+        )
+
+        output = [
+            {
+                "التاريخ": str(start),
+                "النوع": "رصيد بداية الفترة",
+                "المستند": "",
+                "مدين": 0,
+                "دائن": 0,
+                "الرصيد": balance
+            }
+        ]
+
+        movements.sort(
+            key=lambda item: item["date"]
+        )
+
+        for movement in movements:
+            movement_date = movement["date"]
+
+            if not (
+                start <= movement_date <= end
+            ):
+                continue
+
+            value = movement["value"]
+            balance += value
+
+            output.append(
+                {
+                    "التاريخ": str(
+                        movement_date
+                    ),
+                    "النوع": movement["type"],
+                    "المستند": movement[
+                        "reference"
+                    ],
+                    "مدين": max(value, 0),
+                    "دائن": max(-value, 0),
+                    "الرصيد": balance
+                }
+            )
+
+        report = pd.DataFrame(output)
+
+        st.subheader(
+            f"{name} — {code}"
+        )
+
+        st.caption(
+            "خصومات المجلات تؤرخ بأول يوم "
+            "من الشهر المسجل."
+        )
+
+    else:
+        search = st.text_input(
+            "اكتب الكل أو اسم العميل أو كوده"
+        )
+
+        if not search.strip():
+            st.info("مخفي")
+            return
+
+        report = clients[
+            [
+                "customer_code",
+                "customer_name",
+                "opening_balance"
+            ]
+        ].copy()
+
+        totals_sources = [
+            (
+                "المبيعات",
+                "invoice_total",
+                "المبيعات"
+            ),
+            (
+                "المرتجعات",
+                "return_total",
+                "المرتجعات"
+            ),
+            (
+                "التحصيلات",
+                "amount",
+                "التحصيلات"
+            ),
+            (
+                "الخصومات",
+                "discount_value",
+                "الخصومات"
+            ),
+            (
+                "المجلات",
+                "discount_value",
+                "المجلات"
+            )
+        ]
+
+        for source, column, label in totals_sources:
+            frame = data(source)
+
+            frame[column] = pd.to_numeric(
+                frame[column],
+                errors="coerce"
+            ).fillna(0)
+
+            totals = frame.groupby(
+                "customer_code"
+            )[column].sum()
+
+            report[label] = (
+                report["customer_code"]
+                .map(totals)
+                .fillna(0)
+            )
+
+        opening = pd.to_numeric(
+            report["opening_balance"],
+            errors="coerce"
+        ).fillna(0)
+
+        report["المستحق"] = (
+            opening
+            + report["المبيعات"]
+            - report["المرتجعات"]
+            - report["التحصيلات"]
+            - report["الخصومات"]
+            - report["المجلات"]
+        )
+
+        if search.strip() != "الكل":
+            mask = report[
+                [
+                    "customer_code",
+                    "customer_name"
+                ]
+            ].astype(str).apply(
+                lambda column: (
+                    column.str.contains(
+                        search,
+                        regex=False,
+                        na=False
+                    )
+                )
+            ).any(axis=1)
+
+            report = report[mask]
+
+        report = report.rename(
+            columns={
+                "customer_code": "كود العميل",
+                "customer_name": "اسم العميل",
+                "opening_balance": "رصيد أول المدة"
+            }
+        )
+
+    st.dataframe(
+        report,
+        use_container_width=True
+    )
+
+    if can(page, "export"):
+        download(
+            report,
+            "report_" + page
+        )
+
+
+def navigate(group):
+    st.session_state.group = group
+    st.session_state.pop("page", None)
+    st.session_state.pop("editing", None)
+
+
+def login_screen():
+    st.title("تسجيل الدخول")
+
+    with st.form("login"):
+        username = st.text_input(
+            "اسم المستخدم"
+        )
+
+        password = st.text_input(
+            "كلمة المرور",
+            type="password"
+        )
+
+        submitted = st.form_submit_button(
+            "دخول"
+        )
+
+    if not submitted:
+        return
+
+    if (
+        not username.strip()
+        or not password
+    ):
+        st.error(
+            "أدخل اسم المستخدم وكلمة المرور."
+        )
+        return
+
+    found = read(
+        """
+        SELECT *
+        FROM users
+        WHERE username = ? COLLATE NOCASE
+          AND is_active = 1
+        """,
+        (username.strip(),)
+    )
+
+    if (
+        not found.empty
+        and found.iloc[0]["password_hash"]
+        == digest(password)
+    ):
+        st.session_state.user = (
+            found.iloc[0].to_dict()
+        )
+
+        st.session_state.group = (
+            "الرئيسية"
+        )
+
+        st.rerun()
+
+    else:
+        st.error(
+            "اسم المستخدم أو كلمة المرور "
+            "غير صحيحة، أو الحساب غير مفعّل."
+        )
+
+
+def company_settings(company):
+    with st.form("company_settings"):
+        name = st.text_input(
+            "اسم الشركة",
+            value=txt(company["name"])
+        )
+
+        system_name = st.text_input(
+            "اسم النظام",
+            value=txt(
+                company["system_name"]
+            )
+        )
+
+        submitted = st.form_submit_button(
+            "حفظ"
+        )
+
+    if not submitted:
+        return
+
+    if not can(
+        "إعدادات الشركة",
+        "edit"
+    ):
+        st.error(
+            "ليس لديك صلاحية التعديل."
+        )
+        return
+
+    if not name.strip():
+        st.error(
+            "اسم الشركة مطلوب."
+        )
+        return
+
+    write(
+        """
+        UPDATE companies
+        SET name = ?, system_name = ?
+        WHERE id = 1
+        """,
+        (
+            name.strip(),
+            system_name.strip()
+        )
+    )
+
+    refresh()
+
+
+def main():
+    st.caption(
+        "نسخة التشغيل: " + BUILD
+    )
+
+    try:
+        initialize()
+
+    except sqlite3.Error as error:
+        st.error(
+            "تعذر تجهيز قاعدة البيانات."
+        )
+
+        st.write(
+            "نوع الخطأ:",
+            type(error).__name__
+        )
+
+        st.info(
+            "راجع سجل تشغيل Streamlit "
+            "لمعرفة التفاصيل. لا تحذف قاعدة البيانات."
+        )
+
+        return
+
+    st.session_state.setdefault(
+        "user",
+        None
+    )
+
+    if st.session_state.user is None:
+        login_screen()
+        return
+
+    current = read(
+        """
+        SELECT *
+        FROM users
+        WHERE id = ?
+          AND is_active = 1
+        """,
+        (
+            int(
+                st.session_state.user["id"]
+            ),
+        )
+    )
+
+    if current.empty:
+        st.session_state.clear()
+        st.rerun()
+
+    st.session_state.user = (
+        current.iloc[0].to_dict()
+    )
+
+    company = read(
+        """
+        SELECT *
+        FROM companies
+        WHERE id = 1
+        """
+    ).iloc[0]
+
+    st.title(
+        txt(company["system_name"])
+        or "نظام الحسابات والمبيعات"
+    )
+
+    st.caption(
+        f"{company['name']} | "
+        f"{st.session_state.user['full_name']} | "
+        f"{date.today()}"
+    )
+
+    if st.sidebar.button(
+        "تسجيل الخروج"
+    ):
+        st.session_state.clear()
+        st.rerun()
+
+    group = st.session_state.get(
+        "group",
+        "الرئيسية"
+    )
+
+    if group == "الرئيسية":
+        st.subheader(
+            "الأقسام الرئيسية"
+        )
+
+        columns = st.columns(3)
+        visible = 0
+
+        for group_name, pages in GROUPS.items():
+            if not any(
+                can(page, "view")
+                for page in pages
+            ):
+                continue
+
+            columns[visible % 3].button(
+                group_name,
+                on_click=navigate,
+                args=(group_name,),
+                use_container_width=True
+            )
+
+            visible += 1
+
+        if visible == 0:
+            st.warning(
+                "لا توجد صفحات مصرح بها. "
+                "اطلب من طارق ضبط صلاحيات حسابك."
+            )
+
+        return
+
+    st.sidebar.button(
+        "العودة للرئيسية",
+        on_click=navigate,
+        args=("الرئيسية",)
+    )
+
+    pages = [
+        page
+        for page in GROUPS.get(group, [])
+        if can(page, "view")
+    ]
+
+    if not pages:
+        st.warning(
+            "لا توجد صفحات مصرح بها "
+            "داخل هذا القسم."
+        )
+        return
+
+    page = st.sidebar.radio(
+        group,
+        pages,
+        key="page"
+    )
+
+    st.subheader(page)
+
+    if page in CONFIG:
+        operations = ["عرض"]
+
+        if can(page, "add"):
+            operations.append("إضافة")
+
+        if (
+            can(page, "import")
+            or can(page, "export")
+        ):
+            operations.append(
+                "قالب واستيراد"
+            )
+
+        operation = st.radio(
+            "العملية",
+            operations,
+            horizontal=True,
+            key="operation_" + page
+        )
+
+        if operation == "عرض":
+            grid(page)
+
+        elif operation == "إضافة":
+            record_form(page)
+
+        else:
+            import_page(page)
+
+    elif page == "إدارة المستخدمين":
+        users_page()
+
+    elif page in (
+        "كشف الحساب",
+        "الملخص"
+    ):
+        reports(page)
+
+    elif page == "إعدادات الشركة":
+        company_settings(company)
+
+
+if __name__ == "__main__":
+    main()
+
+# END OF APP
