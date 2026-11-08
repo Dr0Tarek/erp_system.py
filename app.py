@@ -2790,10 +2790,10 @@ def africa_page(page):
     if page == "الأفريقية - مبيعات":
         st.caption(
             "تظهر فقط فواتير العميل: "
-            f"{AFRICA_CUSTOMER_NAME}، "
-            "أو الفواتير التي تحتوي الملاحظات على "
-            "«سداد للأفريقية». "
-            "باقي فواتير المبيعات لا تظهر هنا."
+            + AFRICA_CUSTOMER_NAME
+            + "، أو الفواتير التي تحتوي الملاحظات على "
+            + "«سداد للأفريقية». "
+            + "باقي فواتير المبيعات لا تظهر هنا."
         )
 
     if page == "الأفريقية - بنزين":
@@ -3768,4 +3768,27 @@ def main():
             import_page(page)
 
     elif page in {
-        "كشف
+        "كشف حساب عميل",
+        "ملخص العملاء",
+        "كشف حساب مورد",
+        "ملخص الموردين"
+    }:
+        reports(page)
+
+    elif page.startswith("الأفريقية -"):
+        africa_page(page)
+
+    elif page == "إدارة المستخدمين":
+        users_page()
+
+    elif page == "إعدادات الشركة":
+        company_settings(company)
+
+    elif page == "إعدادات السيستم":
+        system_settings_page()
+
+
+if __name__ == "__main__":
+    main()
+
+# END OF APP
