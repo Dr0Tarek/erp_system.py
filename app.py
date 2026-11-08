@@ -18,7 +18,7 @@ st.set_page_config(
 )
 
 DB = "erp_v8.db"
-BUILD = "TAREK-AFRICA-FUEL-HALF-1022"
+BUILD = "TAREK-AFRICA-SALES-FILTER-1023"
 
 MONTHS = [
     "يناير", "فبراير", "مارس", "أبريل",
@@ -375,6 +375,10 @@ LEGACY_ALIASES = {
     "ملخص العملاء": "الملخص"
 }
 
+AFRICA_CUSTOMER_NAME = (
+    "الشركة الافريقيه للصادرات المصرية"
+)
+
 
 def db():
     connection = sqlite3.connect(DB, timeout=30)
@@ -457,6 +461,12 @@ def is_africa_note(value):
     return (
         "سداد للافريقيه" in value
         or "سداد الافريقيه" in value
+    )
+
+
+def is_africa_customer(value):
+    return africa_text(value) == africa_text(
+        AFRICA_CUSTOMER_NAME
     )
 
 
@@ -2724,6 +2734,19 @@ def africa_page(page):
                     == value
                 ]
 
+        if table == "sales":
+            customer_mask = frame["customer_name"].map(
+                is_africa_customer
+            )
+
+            notes_mask = frame["notes"].map(
+                is_africa_note
+            )
+
+            frame = frame[
+                customer_mask | notes_mask
+            ]
+
         for _, row in frame.iterrows():
             direction = ""
             description = ""
@@ -2763,6 +2786,15 @@ def africa_page(page):
         "هذه شاشة تجميع من المصادر ولا تنشئ حركة مالية جديدة. "
         "التعديل والحذف يتمان من المصدر."
     )
+
+    if page == "الأفريقية - مبيعات":
+        st.caption(
+            "تظهر فقط فواتير العميل: "
+            f"{AFRICA_CUSTOMER_NAME}، "
+            "أو الفواتير التي تحتوي الملاحظات على "
+            "«سداد للأفريقية». "
+            "باقي فواتير المبيعات لا تظهر هنا."
+        )
 
     if page == "الأفريقية - بنزين":
         st.caption(
@@ -3736,27 +3768,4 @@ def main():
             import_page(page)
 
     elif page in {
-        "كشف حساب عميل",
-        "ملخص العملاء",
-        "كشف حساب مورد",
-        "ملخص الموردين"
-    }:
-        reports(page)
-
-    elif page.startswith("الأفريقية -"):
-        africa_page(page)
-
-    elif page == "إدارة المستخدمين":
-        users_page()
-
-    elif page == "إعدادات الشركة":
-        company_settings(company)
-
-    elif page == "إعدادات السيستم":
-        system_settings_page()
-
-
-if __name__ == "__main__":
-    main()
-
-# END OF APP
+        "كشف
