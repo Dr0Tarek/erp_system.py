@@ -18,7 +18,7 @@ st.set_page_config(
 )
 
 DB = "erp_v8.db"
-BUILD = "TAREK-SYSTEM-OWNER-SETTINGS-1021"
+BUILD = "TAREK-AFRICA-FUEL-HALF-1022"
 
 MONTHS = [
     "يناير", "فبراير", "مارس", "أبريل",
@@ -318,6 +318,7 @@ GROUPS = {
         "الأفريقية - مبيعات",
         "الأفريقية - مشتريات",
         "الأفريقية - شيكات",
+        "الأفريقية - بنزين",
         "الأفريقية - تحويلات"
     ],
     "المسودة": ["المسودة"],
@@ -599,9 +600,9 @@ def initialize():
                         "طارق", "super_admin", 1, "ALL"
                     )
                 )
-                owner_id = int(cursor.lastrowid)
+                owner_id_value = int(cursor.lastrowid)
             else:
-                owner_id = int(tarek["id"])
+                owner_id_value = int(tarek["id"])
 
             # تثبيت معرّف المالك مرة واحدة.
             # لا يعاد تغييره مع كل تشغيل.
@@ -614,7 +615,7 @@ def initialize():
                 VALUES(1, ?, ?, ?, NULL)
                 """,
                 (
-                    owner_id,
+                    owner_id_value,
                     "نظام الحسابات والمبيعات",
                     "تسجيل الدخول"
                 )
@@ -2646,7 +2647,7 @@ def africa_page(page):
             (
                 "المبيعات", "sales", "invoice_date",
                 "invoice_no", "customer_name",
-                "invoice_total", "مبيعات"
+                "invoice_total", "مبيعات", 1.0
             )
         ]
 
@@ -2656,19 +2657,19 @@ def africa_page(page):
                 "فواتير الموردين", "supplier_invoices",
                 "invoice_date", "invoice_no",
                 "supplier_name", "invoice_total",
-                "فاتورة مشتريات"
+                "فاتورة مشتريات", 1.0
             ),
             (
                 "مرتجعات الموردين", "supplier_returns",
                 "return_date", "return_no",
                 "supplier_name", "return_total",
-                "مرتجع مورد"
+                "مرتجع مورد", 1.0
             ),
             (
                 "مدفوعات الموردين", "supplier_payments",
                 "payment_date", "payment_no",
                 "supplier_name", "amount",
-                "سداد مورد"
+                "سداد مورد", 1.0
             )
         ]
 
@@ -2677,16 +2678,27 @@ def africa_page(page):
             (
                 "التحصيلات", "collections",
                 "collection_date", "invoice_no",
-                "customer_name", "amount", "تحصيل"
+                "customer_name", "amount", "تحصيل", 1.0
+            )
+        ]
+
+    elif page == "الأفريقية - بنزين":
+        sources = [
+            (
+                "مصروفات الأستاذ - بنزين", "expenses",
+                "expense_date", "id",
+                "responsible", "amount",
+                "بنزين", 0.5
             )
         ]
 
     else:
         sources = [
             (
-                "expenses", "expenses",
+                "مصروفات الأستاذ - مصروف", "expenses",
                 "expense_date", "id",
-                "responsible", "amount", "حركة مصروفات"
+                "responsible", "amount",
+                "حركة مصروفات", 1.0
             )
         ]
 
@@ -2696,45 +2708,24 @@ def africa_page(page):
     for (
         source_page, table, date_column,
         reference_column, party_column,
-        amount_column, kind
+        amount_column, kind, multiplier
     ) in sources:
-        if table != "expenses" and not can(source_page, "view"):
+        if not can(source_page, "view"):
             hidden_sources.append(source_page)
             continue
 
         frame = table_data(table)
 
-        if table == "expenses" and not admin():
-            allowed_mask = pd.Series(
-                False, index=frame.index
-            )
+        if table == "expenses":
+            configuration = PAGE_CONFIG[source_page]
 
-            for expense_page, config in PAGE_CONFIG.items():
-                if (
-                    config["table"] != "expenses"
-                    or not can(expense_page, "view")
-                ):
-                    continue
-
-                mask = pd.Series(
-                    True, index=frame.index
-                )
-
-                for column, value in config.get(
-                    "fixed", {}
-                ).items():
-                    mask &= (
-                        frame[column].fillna("").astype(str)
-                        == value
-                    )
-
-                allowed_mask |= mask
-
-            frame = frame[allowed_mask]
-
-        frame = frame[
-            frame["notes"].map(is_africa_note)
-        ]
+            for column, value in configuration.get(
+                "fixed", {}
+            ).items():
+                frame = frame[
+                    frame[column].fillna("").astype(str)
+                    == value
+                ]
 
         for _, row in frame.iterrows():
             direction = ""
@@ -2763,7 +2754,10 @@ def africa_page(page):
                     "الحساب أو المسؤول": txt(row[party_column]),
                     "نوع الحركة": direction,
                     "البيان": description,
-                    "المبلغ": num(row[amount_column]),
+                    "المبلغ الأصلي": num(row[amount_column]),
+                    "المبلغ في الأفريقية": (
+                        num(row[amount_column]) * multiplier
+                    ),
                     "ملاحظات": txt(row["notes"])
                 }
             )
@@ -2772,6 +2766,13 @@ def africa_page(page):
         "هذه شاشة تجميع من المصادر ولا تنشئ حركة مالية جديدة. "
         "التعديل والحذف يتمان من المصدر."
     )
+
+    if page == "الأفريقية - بنزين":
+        st.caption(
+            "يظهر بنصف قيمة قيد البنزين المسجل في "
+            "مصروفات الأستاذ - بنزين. "
+            "القيد الأصلي يظل كما هو."
+        )
 
     if page == "الأفريقية - مشتريات":
         st.caption(
@@ -2797,7 +2798,8 @@ def africa_page(page):
             "المصدر", "رقم السجل بالمصدر",
             "التاريخ", "رقم المستند",
             "الحساب أو المسؤول", "نوع الحركة",
-            "البيان", "المبلغ", "ملاحظات"
+            "البيان", "المبلغ الأصلي",
+            "المبلغ في الأفريقية", "ملاحظات"
         ]
     )
 
@@ -2819,11 +2821,18 @@ def africa_page(page):
 
     if not result.empty:
         st.subheader("إجمالي حسب نوع المصدر")
+
+        summary = result.groupby(
+            "المصدر", as_index=False
+        ).agg(
+            {
+                "المبلغ الأصلي": "sum",
+                "المبلغ في الأفريقية": "sum"
+            }
+        )
+
         st.dataframe(
-            result.groupby(
-                "المصدر", as_index=False
-            )["المبلغ"].sum(),
-            use_container_width=True
+            summary, use_container_width=True
         )
 
     if can(page, "export"):
@@ -3541,216 +3550,4 @@ def navigate(group):
     st.session_state.pop("editing", None)
 
 
-def login_screen(settings):
-    show_system_brand(settings)
-
-    st.subheader(
-        txt(settings["login_title"])
-        or "تسجيل الدخول"
-    )
-
-    with st.form("login"):
-        username = st.text_input("اسم المستخدم")
-        password = st.text_input(
-            "كلمة المرور", type="password"
-        )
-        submitted = st.form_submit_button("دخول")
-
-    if not submitted:
-        return
-
-    if not username.strip() or not password:
-        st.error(
-            "أدخل اسم المستخدم وكلمة المرور."
-        )
-        return
-
-    found = read(
-        """
-        SELECT * FROM users
-        WHERE username = ? COLLATE NOCASE
-          AND is_active = 1
-        """,
-        (username.strip(),)
-    )
-
-    if (
-        not found.empty
-        and found.iloc[0]["password_hash"]
-        == digest(password)
-    ):
-        st.session_state.user = (
-            found.iloc[0].to_dict()
-        )
-        st.session_state.group = "الرئيسية"
-        st.rerun()
-    else:
-        st.error(
-            "اسم المستخدم أو كلمة المرور غير صحيحة "
-            "أو الحساب غير مفعّل."
-        )
-
-
-def main():
-    st.caption("نسخة التشغيل: " + BUILD)
-
-    try:
-        initialize()
-    except sqlite3.Error as error:
-        st.error(
-            "تعذر تجهيز قاعدة البيانات. "
-            "راجع سجل التشغيل ولا تحذف البيانات."
-        )
-        st.write(
-            "نوع الخطأ:", type(error).__name__
-        )
-        return
-
-    settings = system_settings_row()
-
-    st.session_state.setdefault("user", None)
-
-    if st.session_state.user is None:
-        login_screen(settings)
-        return
-
-    found = read(
-        """
-        SELECT * FROM users
-        WHERE id = ? AND is_active = 1
-        """,
-        (int(st.session_state.user["id"]),)
-    )
-
-    if found.empty:
-        st.session_state.clear()
-        st.rerun()
-
-    st.session_state.user = (
-        found.iloc[0].to_dict()
-    )
-
-    company = read(
-        "SELECT * FROM companies WHERE id = 1"
-    ).iloc[0]
-
-    show_authenticated_header(
-        settings, company
-    )
-
-    messages = st.session_state.pop(
-        "save_messages", []
-    )
-
-    for index, message in enumerate(messages):
-        if index == 0:
-            st.success(message)
-        else:
-            st.warning(message)
-
-    if st.sidebar.button("تسجيل الخروج"):
-        st.session_state.clear()
-        st.rerun()
-
-    group = st.session_state.get(
-        "group", "الرئيسية"
-    )
-
-    if group == "الرئيسية":
-        st.subheader("الأقسام الرئيسية")
-        columns = st.columns(3)
-        visible = 0
-
-        for group_name, pages in GROUPS.items():
-            if not any(
-                can(page, "view") for page in pages
-            ):
-                continue
-
-            columns[visible % 3].button(
-                group_name,
-                on_click=navigate,
-                args=(group_name,),
-                use_container_width=True
-            )
-            visible += 1
-
-        if not visible:
-            st.warning(
-                "لا توجد صفحات مصرح بها. "
-                "اطلب من طارق ضبط صلاحياتك."
-            )
-        return
-
-    st.sidebar.button(
-        "العودة للرئيسية",
-        on_click=navigate,
-        args=("الرئيسية",)
-    )
-
-    pages = [
-        page
-        for page in GROUPS.get(group, [])
-        if can(page, "view")
-    ]
-
-    if not pages:
-        st.warning("لا توجد صفحات مصرح بها.")
-        return
-
-    page = st.sidebar.radio(
-        group, pages, key="page"
-    )
-    st.subheader(page)
-
-    if page in PAGE_CONFIG:
-        operations = ["عرض"]
-
-        if can(page, "add"):
-            operations.append("إضافة")
-
-        if (
-            can(page, "import")
-            or can(page, "export")
-        ):
-            operations.append("قالب واستيراد")
-
-        operation = st.radio(
-            "العملية",
-            operations,
-            horizontal=True,
-            key="operation_" + page
-        )
-
-        if operation == "عرض":
-            grid(page)
-        elif operation == "إضافة":
-            record_form(page)
-        else:
-            import_page(page)
-
-    elif page in {
-        "كشف حساب عميل",
-        "ملخص العملاء",
-        "كشف حساب مورد",
-        "ملخص الموردين"
-    }:
-        reports(page)
-
-    elif page.startswith("الأفريقية -"):
-        africa_page(page)
-
-    elif page == "إدارة المستخدمين":
-        users_page()
-
-    elif page == "إعدادات الشركة":
-        company_settings(company)
-
-    elif page == "إعدادات السيستم":
-        system_settings_page()
-
-
-if __name__ == "__main__":
-    main()
-
-# END OF APP
+def
