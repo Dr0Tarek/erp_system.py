@@ -18,7 +18,7 @@ st.set_page_config(
 )
 
 DB = "erp_v8.db"
-BUILD = "TAREK-EXPENSE-FIX-1027"
+BUILD = "TAREK-INDENT-FIX-1028"
 
 MONTHS = [
     "يناير", "فبراير", "مارس", "أبريل",
@@ -4136,3 +4136,64 @@ def main():
     ]
 
     if not pages:
+        st.warning("لا توجد صفحات مصرح بها.")
+        return
+
+    page = st.sidebar.radio(
+        group, pages, key="page"
+    )
+    st.subheader(page)
+
+    if page in PAGE_CONFIG:
+        operations = ["عرض"]
+
+        if can(page, "add"):
+            operations.append("إضافة")
+
+        if (
+            can(page, "import")
+            or can(page, "export")
+        ):
+            operations.append("قالب واستيراد")
+
+        operation = st.radio(
+            "العملية",
+            operations,
+            horizontal=True,
+            key="operation_" + page
+        )
+
+        if operation == "عرض":
+            grid(page)
+        elif operation == "إضافة":
+            record_form(page)
+        else:
+            import_page(page)
+
+    elif page in {
+        "كشف حساب عميل",
+        "ملخص العملاء",
+        "كشف حساب مورد",
+        "ملخص الموردين",
+        "كشف حساب مصروفات الأستاذ والخزينة",
+        "ملخص مصروفات الأستاذ والخزينة"
+    }:
+        reports(page)
+
+    elif page.startswith("الأفريقية -"):
+        africa_page(page)
+
+    elif page == "إدارة المستخدمين":
+        users_page()
+
+    elif page == "إعدادات الشركة":
+        company_settings(company)
+
+    elif page == "إعدادات السيستم":
+        system_settings_page()
+
+
+if __name__ == "__main__":
+    main()
+
+# END OF APP
