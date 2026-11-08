@@ -18,7 +18,7 @@ st.set_page_config(
 )
 
 DB = "erp_v8.db"
-BUILD = "TAREK-LOGO-COMPLETE-0947"
+BUILD = "TAREK-SYSTEM-OWNER-SETTINGS-1021"
 
 MONTHS = [
     "يناير", "فبراير", "مارس", "أبريل",
@@ -37,7 +37,7 @@ ACTIONS = {
     "receive": "تغيير الاستلام"
 }
 
-# أنواع الحقول: t نص، n رقم، d تاريخ.
+# t = نص، n = رقم، d = تاريخ
 RAW_TABLES = {
     "customers": """
 customer_code|كود العميل|t
@@ -322,14 +322,18 @@ GROUPS = {
     ],
     "المسودة": ["المسودة"],
     "الإعدادات": [
-        "إدارة المستخدمين", "إعدادات الشركة"
+        "إعدادات السيستم",
+        "إدارة المستخدمين",
+        "إعدادات الشركة"
     ]
 }
 
-PAGES = [
+# إعدادات السيستم ليست صلاحية يمكن منحها من الجدول.
+GRANTABLE_PAGES = [
     page
     for group_pages in GROUPS.values()
     for page in group_pages
+    if page != "إعدادات السيستم"
 ]
 
 LISTS = {
@@ -356,9 +360,7 @@ LISTS = {
     "collection_type": [
         "كاش", "شيك", "تحويل بنكى", "خصم من المديونية"
     ],
-    "payment_type": [
-        "كاش", "شيك", "تحويل بنكى"
-    ],
+    "payment_type": ["كاش", "شيك", "تحويل بنكى"],
     "transaction_type": ["إيداع", "سحب"],
     "conditions": [
         "على المبيعات", "على الشيك", "مره واحده",
@@ -499,6 +501,14 @@ def initialize():
                     action TEXT,
                     details TEXT
                 );
+
+                CREATE TABLE IF NOT EXISTS system_settings(
+                    id INTEGER PRIMARY KEY CHECK(id = 1),
+                    owner_user_id INTEGER NOT NULL,
+                    system_name TEXT NOT NULL,
+                    login_title TEXT NOT NULL,
+                    logo_data BLOB
+                );
             """)
 
             company_columns = {
@@ -567,7 +577,7 @@ def initialize():
                 )
             )
 
-            existing_user = connection.execute(
+            tarek = connection.execute(
                 """
                 SELECT id FROM users
                 WHERE username = ? COLLATE NOCASE
@@ -575,8 +585,8 @@ def initialize():
                 ("tarek",)
             ).fetchone()
 
-            if existing_user is None:
-                connection.execute(
+            if tarek is None:
+                cursor = connection.execute(
                     """
                     INSERT INTO users(
                         username, password_hash, full_name,
@@ -589,15 +599,81 @@ def initialize():
                         "طارق", "super_admin", 1, "ALL"
                     )
                 )
+                owner_id = int(cursor.lastrowid)
+            else:
+                owner_id = int(tarek["id"])
+
+            # تثبيت معرّف المالك مرة واحدة.
+            # لا يعاد تغييره مع كل تشغيل.
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO system_settings(
+                    id, owner_user_id,
+                    system_name, login_title, logo_data
+                )
+                VALUES(1, ?, ?, ?, NULL)
+                """,
+                (
+                    owner_id,
+                    "نظام الحسابات والمبيعات",
+                    "تسجيل الدخول"
+                )
+            )
+
     finally:
         connection.close()
 
 
+def system_settings_row():
+    return read(
+        "SELECT * FROM system_settings WHERE id = 1"
+    ).iloc[0]
+
+
+def owner_id():
+    row = read(
+        """
+        SELECT owner_user_id
+        FROM system_settings
+        WHERE id = 1
+        """
+    )
+    return int(row.iloc[0]["owner_user_id"])
+
+
+def is_owner():
+    user = st.session_state.get("user")
+
+    if not user:
+        return False
+
+    current = read(
+        """
+        SELECT id, is_active
+        FROM users
+        WHERE id = ?
+        """,
+        (int(user["id"]),)
+    )
+
+    return (
+        not current.empty
+        and bool(current.iloc[0]["is_active"])
+        and int(current.iloc[0]["id"]) == owner_id()
+    )
+
+
 def admin():
-    return st.session_state.user["role"] == "super_admin"
+    return (
+        is_owner()
+        or st.session_state.user["role"] == "super_admin"
+    )
 
 
 def can(page, action):
+    if page == "إعدادات السيستم":
+        return is_owner()
+
     if admin():
         return True
 
@@ -635,6 +711,13 @@ def require(page, action):
     if not can(page, "view") or not can(page, action):
         raise ValueError(
             "ليس لديك صلاحية تنفيذ هذه العملية"
+        )
+
+
+def require_owner():
+    if not is_owner():
+        raise ValueError(
+            "هذه العملية متاحة لمالك السيستم فقط."
         )
 
 
@@ -685,7 +768,8 @@ def party_details(table):
         )
 
     if table in {
-        "supplier_invoices", "supplier_returns",
+        "supplier_invoices",
+        "supplier_returns",
         "supplier_payments"
     }:
         return (
@@ -943,7 +1027,6 @@ def invoice_warning(customer_code, exclude_id=None):
     try:
         for _, invoice in invoices.iterrows():
             amount = invoice_remaining(connection, invoice)
-
             if amount > 0.005:
                 unpaid.append(
                     (txt(invoice["invoice_no"]), amount)
@@ -1015,7 +1098,6 @@ def prepare(page, values, record_id=None):
                 raise ValueError(
                     f"{label}: التاريخ مطلوب"
                 )
-
             values[name] = str(pd.Timestamp(value).date())
 
         else:
@@ -1128,7 +1210,6 @@ def prepare(page, values, record_id=None):
             warning = invoice_warning(
                 values["customer_code"], record_id
             )
-
             if warning:
                 messages.append(warning)
 
@@ -1184,7 +1265,6 @@ def prepare(page, values, record_id=None):
                             value for value in references if value
                         )
                     )
-
                     values["original_invoice_no"] = ""
 
                     messages.append(
@@ -1226,6 +1306,7 @@ def prepare(page, values, record_id=None):
             if values["discount_type"] == "نسبة مئوية"
             else values["fixed_amount"]
         )
+
         values["tax_amount"] = (
             values["invoice_total"] - values["before_tax"]
         )
@@ -1362,7 +1443,6 @@ def record_form(page, row=None):
                     message = invoice_warning(
                         code, record_id
                     )
-
                     if message:
                         st.warning(message)
 
@@ -1421,8 +1501,7 @@ def record_form(page, row=None):
                 try:
                     initial = (
                         pd.Timestamp(old).date()
-                        if txt(old)
-                        else date.today()
+                        if txt(old) else date.today()
                     )
                 except (ValueError, TypeError):
                     initial = date.today()
@@ -1639,7 +1718,6 @@ def import_page(page):
                 messages = save(
                     page, values, importing=True
                 )
-
                 saved_count += 1
 
                 for message in messages:
@@ -1725,7 +1803,6 @@ def bulk_action(page, record_ids, action, options=None):
                 if action == "delete":
                     if table in ("customers", "suppliers"):
                         supplier_side = table == "suppliers"
-
                         code_column = (
                             "supplier_code"
                             if supplier_side
@@ -1769,7 +1846,6 @@ def bulk_action(page, record_ids, action, options=None):
                         supplier_side = (
                             table == "supplier_invoices"
                         )
-
                         code_column = (
                             "supplier_code"
                             if supplier_side
@@ -1897,7 +1973,6 @@ def bulk_action(page, record_ids, action, options=None):
                                 "سداد جماعي"
                             )
                         )
-
                 else:
                     raise ValueError(
                         "الإجراء غير متاح لهذه الصفحة."
@@ -1961,7 +2036,6 @@ def grid(page):
 
     if table in ("sales", "supplier_invoices"):
         connection = db()
-
         try:
             calculator = (
                 invoice_remaining
@@ -2034,6 +2108,7 @@ def grid(page):
         state["revision"] += 1
 
     model = shown.copy()
+
     model.insert(
         0,
         "تحديد",
@@ -2041,6 +2116,7 @@ def grid(page):
             state["ids"]
         ).to_numpy()
     )
+
     model["إجراء"] = ""
 
     row_options = [""]
@@ -2194,7 +2270,7 @@ def grid(page):
             )
             st.caption(
                 "يسجل تحصيلات فعلية. "
-                "لا يخصص الخصومات والمجلات على الفواتير تلقائياً."
+                "لا يخصص الخصومات والمجلات تلقائياً."
             )
 
         confirmed = st.checkbox(
@@ -2622,10 +2698,9 @@ def africa_page(page):
         reference_column, party_column,
         amount_column, kind
     ) in sources:
-        if table != "expenses":
-            if not can(source_page, "view"):
-                hidden_sources.append(source_page)
-                continue
+        if table != "expenses" and not can(source_page, "view"):
+            hidden_sources.append(source_page)
+            continue
 
         frame = table_data(table)
 
@@ -2649,9 +2724,7 @@ def africa_page(page):
                     "fixed", {}
                 ).items():
                     mask &= (
-                        frame[column]
-                        .fillna("")
-                        .astype(str)
+                        frame[column].fillna("").astype(str)
                         == value
                     )
 
@@ -2765,7 +2838,7 @@ def africa_page(page):
 def users_page():
     if not admin():
         st.error(
-            "إدارة المستخدمين للحساب الأساسي فقط."
+            "إدارة المستخدمين للحساب الأساسي أو المدير المصرح."
         )
         return
 
@@ -2834,13 +2907,22 @@ def users_page():
         users["id"] == user_id
     ].iloc[0]
 
-    if user["role"] == "super_admin":
+    target_is_owner = int(user_id) == owner_id()
+
+    if target_is_owner:
         st.info(
-            "الحساب الأساسي له كل الصلاحيات "
-            "ومحمي من الحذف والتعطيل."
+            "هذا حساب مالك السيستم. "
+            "لا يمكن حذف أو تعطيل الحساب "
+            "أو تغيير ملكيته من هنا."
         )
 
-        with st.form("admin_password"):
+        if not is_owner():
+            st.warning(
+                "بيانات مالك السيستم لا يعدلها حساب آخر."
+            )
+            return
+
+        with st.form("owner_password"):
             replacement = st.text_input(
                 "كلمة مرور جديدة للحساب الأساسي",
                 type="password"
@@ -2850,6 +2932,8 @@ def users_page():
             )
 
         if submitted:
+            require_owner()
+
             if replacement:
                 write(
                     """
@@ -2858,7 +2942,7 @@ def users_page():
                     """,
                     (
                         digest(replacement),
-                        int(user_id)
+                        owner_id()
                     )
                 )
                 st.success("تم تغيير كلمة المرور.")
@@ -2866,6 +2950,12 @@ def users_page():
                 st.error("أدخل كلمة المرور الجديدة.")
 
         return
+
+    if user["role"] == "super_admin":
+        st.info(
+            "هذا حساب مدير شامل. لا تمنحه صفحة إعدادات "
+            "السيستم؛ تظل خاصة بالمالك فقط."
+        )
 
     saved = read(
         """
@@ -2898,13 +2988,13 @@ def users_page():
                     for action, label in ACTIONS.items()
                 }
             }
-            for page in PAGES
+            for page in GRANTABLE_PAGES
         ]
     )
 
     st.caption(
-        "إلغاء عرض يمنع الدخول وكل العمليات. "
-        "السداد الجماعي والاستلام للمبيعات فقط."
+        "إعدادات السيستم غير موجودة هنا لأنها لا تُمنح "
+        "لمستخدم آخر. إلغاء عرض يمنع كل عمليات الصفحة."
     )
 
     edited = st.data_editor(
@@ -2928,11 +3018,19 @@ def users_page():
     )
 
     if st.button("حفظ الصلاحيات"):
+        if int(user_id) == owner_id():
+            raise ValueError(
+                "لا يجوز تعديل صلاحيات المالك بهذه الطريقة."
+            )
+
         connection = db()
 
         try:
             with connection:
                 for _, row in edited.iterrows():
+                    if row["الصفحة"] not in GRANTABLE_PAGES:
+                        raise ValueError("صفحة غير مسموحة.")
+
                     for action, label in ACTIONS.items():
                         permitted = (
                             bool(row[label])
@@ -2994,6 +3092,15 @@ def users_page():
         "حذف المستخدم",
         disabled=not confirm_delete
     ):
+        if int(user_id) == owner_id():
+            raise ValueError("لا يمكن حذف مالك السيستم.")
+
+        if int(user_id) == int(st.session_state.user["id"]):
+            st.error(
+                "لا تحذف الحساب الذي تستخدمه حالياً."
+            )
+            return
+
         connection = db()
 
         try:
@@ -3060,7 +3167,6 @@ def prepare_logo(uploaded):
                 )
 
                 output = io.BytesIO()
-
                 image.save(
                     output,
                     format="PNG",
@@ -3081,66 +3187,67 @@ def prepare_logo(uploaded):
         ) from error
 
 
-def company_settings(company):
-    current_logo = company.get("logo_data")
-
-    has_logo = (
-        isinstance(
-            current_logo,
-            (bytes, bytearray, memoryview)
-        )
-        and len(current_logo) > 0
+def valid_logo_blob(value):
+    return (
+        isinstance(value, (bytes, bytearray, memoryview))
+        and len(value) > 0
     )
 
-    if has_logo:
-        st.write("اللوجو الحالي")
+
+def display_logo(value, width=140):
+    if not valid_logo_blob(value):
+        return False
+
+    try:
         st.image(
-            io.BytesIO(bytes(current_logo)),
-            width=180
+            io.BytesIO(bytes(value)),
+            width=width
         )
-    else:
-        st.info("لا يوجد لوجو محفوظ للشركة.")
+        return True
+    except Exception:
+        st.caption("تعذر عرض الصورة المحفوظة.")
+        return False
 
-    allowed_to_edit = can(
-        "إعدادات الشركة", "edit"
+
+def system_settings_page():
+    require_owner()
+    settings = system_settings_row()
+
+    st.info(
+        "هذه إعدادات عامة للسيستم ومستقلة عن الشركة. "
+        "لا تظهر الصفحة ولا تُمنح صلاحيتها لأي حساب آخر."
     )
 
-    with st.form("company_settings"):
-        company_name = st.text_input(
-            "اسم الشركة",
-            value=txt(company["name"]),
-            disabled=not allowed_to_edit
+    st.write("لوجو السيستم الحالي")
+    if not display_logo(settings["logo_data"], width=180):
+        st.caption("لا يوجد لوجو عام محفوظ.")
+
+    with st.form("system_settings_form"):
+        system_name = st.text_input(
+            "اسم السيستم العام",
+            value=txt(settings["system_name"])
         )
 
-        system_name = st.text_input(
-            "اسم النظام",
-            value=txt(company["system_name"]),
-            disabled=not allowed_to_edit
+        login_title = st.text_input(
+            "عنوان شاشة تسجيل الدخول",
+            value=txt(settings["login_title"])
         )
 
         uploaded_logo = st.file_uploader(
-            "رفع لوجو جديد",
+            "رفع لوجو السيستم",
             type=["png", "jpg", "jpeg", "webp"],
-            disabled=not allowed_to_edit,
             help=(
-                "الحد الأقصى 5 ميجابايت. "
-                "يُحفظ اللوجو داخل قاعدة البيانات."
+                "يظهر قبل تسجيل الدخول. "
+                "الحد الأقصى 5 ميجابايت."
             )
         )
 
         delete_logo = st.checkbox(
-            "حذف اللوجو الحالي",
-            disabled=not allowed_to_edit
+            "حذف لوجو السيستم الحالي"
         )
 
         submitted = st.form_submit_button(
-            "حفظ إعدادات الشركة",
-            disabled=not allowed_to_edit
-        )
-
-    if not allowed_to_edit:
-        st.caption(
-            "الإعدادات للعرض فقط حسب صلاحيات الحساب."
+            "حفظ إعدادات السيستم"
         )
 
     prepared_logo = None
@@ -3150,15 +3257,160 @@ def company_settings(company):
             prepared_logo = prepare_logo(uploaded_logo)
         except ValueError as error:
             st.error(str(error))
-
             if submitted:
                 return
         else:
             st.write("معاينة اللوجو الجديد")
-            st.image(
-                io.BytesIO(prepared_logo),
-                width=180
+            display_logo(prepared_logo, width=180)
+
+    if not submitted:
+        return
+
+    require_owner()
+
+    if not system_name.strip():
+        st.error("اسم السيستم مطلوب.")
+        return
+
+    if not login_title.strip():
+        st.error("عنوان شاشة الدخول مطلوب.")
+        return
+
+    if delete_logo and uploaded_logo is not None:
+        st.error(
+            "اختر حذف اللوجو أو رفع لوجو جديد، "
+            "وليس الاثنين معاً."
+        )
+        return
+
+    connection = db()
+
+    try:
+        with connection:
+            stored_owner = connection.execute(
+                """
+                SELECT owner_user_id
+                FROM system_settings
+                WHERE id = 1
+                """
+            ).fetchone()
+
+            if (
+                stored_owner is None
+                or int(stored_owner["owner_user_id"])
+                != int(st.session_state.user["id"])
+            ):
+                raise ValueError(
+                    "غير مصرح بتعديل إعدادات السيستم."
+                )
+
+            connection.execute(
+                """
+                UPDATE system_settings
+                SET system_name = ?, login_title = ?
+                WHERE id = 1
+                """,
+                (
+                    system_name.strip(),
+                    login_title.strip()
+                )
             )
+
+            if delete_logo:
+                connection.execute(
+                    """
+                    UPDATE system_settings
+                    SET logo_data = NULL
+                    WHERE id = 1
+                    """
+                )
+
+            elif prepared_logo is not None:
+                connection.execute(
+                    """
+                    UPDATE system_settings
+                    SET logo_data = ?
+                    WHERE id = 1
+                    """,
+                    (sqlite3.Binary(prepared_logo),)
+                )
+
+            audit(
+                connection,
+                "system_settings",
+                {
+                    "logo_action": (
+                        "delete"
+                        if delete_logo
+                        else "replace"
+                        if prepared_logo is not None
+                        else "unchanged"
+                    )
+                }
+            )
+
+    except (ValueError, sqlite3.Error) as error:
+        st.error(str(error))
+        return
+
+    finally:
+        connection.close()
+
+    st.session_state["save_messages"] = [
+        "تم حفظ إعدادات السيستم."
+    ]
+    refresh()
+
+
+def company_settings(company):
+    st.write("لوجو الشركة الحالي")
+
+    if not display_logo(company.get("logo_data"), width=180):
+        st.caption("لا يوجد لوجو شركة محفوظ.")
+
+    allowed_to_edit = can("إعدادات الشركة", "edit")
+
+    with st.form("company_settings_form"):
+        company_name = st.text_input(
+            "اسم الشركة",
+            value=txt(company["name"]),
+            disabled=not allowed_to_edit
+        )
+
+        company_system_name = st.text_input(
+            "اسم النظام داخل الشركة",
+            value=txt(company["system_name"]),
+            disabled=not allowed_to_edit
+        )
+
+        uploaded_logo = st.file_uploader(
+            "رفع لوجو الشركة",
+            type=["png", "jpg", "jpeg", "webp"],
+            disabled=not allowed_to_edit
+        )
+
+        delete_logo = st.checkbox(
+            "حذف لوجو الشركة الحالي",
+            disabled=not allowed_to_edit
+        )
+
+        submitted = st.form_submit_button(
+            "حفظ إعدادات الشركة",
+            disabled=not allowed_to_edit
+        )
+
+    prepared_logo = None
+
+    if uploaded_logo is not None:
+        try:
+            prepared_logo = prepare_logo(uploaded_logo)
+        except ValueError as error:
+            st.error(str(error))
+            if submitted:
+                return
+        else:
+            st.write("معاينة لوجو الشركة الجديد")
+            display_logo(prepared_logo, width=180)
 
     if not submitted:
         return
@@ -3171,8 +3423,7 @@ def company_settings(company):
 
     if delete_logo and uploaded_logo is not None:
         st.error(
-            "اختر حذف اللوجو أو رفع لوجو جديد، "
-            "وليس الاثنين معاً."
+            "اختر حذف اللوجو أو رفع لوجو جديد."
         )
         return
 
@@ -3188,7 +3439,7 @@ def company_settings(company):
                 """,
                 (
                     company_name.strip(),
-                    system_name.strip()
+                    company_system_name.strip()
                 )
             )
 
@@ -3196,23 +3447,18 @@ def company_settings(company):
                 connection.execute(
                     """
                     UPDATE companies
-                    SET logo_data = NULL,
-                        logo_path = NULL
+                    SET logo_data = NULL, logo_path = NULL
                     WHERE id = 1
                     """
                 )
-
             elif prepared_logo is not None:
                 connection.execute(
                     """
                     UPDATE companies
-                    SET logo_data = ?,
-                        logo_path = NULL
+                    SET logo_data = ?, logo_path = NULL
                     WHERE id = 1
                     """,
-                    (
-                        sqlite3.Binary(prepared_logo),
-                    )
+                    (sqlite3.Binary(prepared_logo),)
                 )
 
             audit(
@@ -3232,58 +3478,58 @@ def company_settings(company):
 
     except sqlite3.Error:
         st.error(
-            "تعذر حفظ إعدادات الشركة. "
-            "راجع سجل التشغيل."
+            "تعذر حفظ إعدادات الشركة. راجع سجل التشغيل."
         )
         return
-
     finally:
         connection.close()
 
     st.session_state["save_messages"] = [
-        "تم حفظ إعدادات الشركة واللوجو."
+        "تم حفظ إعدادات الشركة."
     ]
-
     refresh()
 
 
-def show_header(company):
-    logo = company.get("logo_data")
-
-    has_logo = (
-        isinstance(
-            logo,
-            (bytes, bytearray, memoryview)
-        )
-        and len(logo) > 0
-    )
-
+def show_system_brand(settings):
+    logo = settings.get("logo_data")
     title = (
-        txt(company["system_name"])
+        txt(settings["system_name"])
         or "نظام الحسابات والمبيعات"
     )
 
-    if has_logo:
-        logo_column, title_column = st.columns(
-            [1, 7]
-        )
+    if valid_logo_blob(logo):
+        logo_column, title_column = st.columns([1, 7])
 
         with logo_column:
-            try:
-                st.image(
-                    io.BytesIO(bytes(logo)),
-                    width=100
-                )
-            except Exception:
-                st.caption("تعذر عرض اللوجو.")
+            display_logo(logo, width=100)
 
         with title_column:
             st.title(title)
     else:
         st.title(title)
 
+
+def show_authenticated_header(settings, company):
+    show_system_brand(settings)
+
+    if valid_logo_blob(company.get("logo_data")):
+        logo_column, details_column = st.columns([1, 7])
+
+        with logo_column:
+            display_logo(
+                company["logo_data"],
+                width=85
+            )
+
+        with details_column:
+            st.subheader(txt(company["name"]))
+            st.caption(
+                txt(company["system_name"])
+            )
+    else:
+        st.subheader(txt(company["name"]))
+
     st.caption(
-        f"{company['name']} | "
         f"{st.session_state.user['full_name']} | "
         f"{date.today()}"
     )
@@ -3295,8 +3541,13 @@ def navigate(group):
     st.session_state.pop("editing", None)
 
 
-def login_screen():
-    st.title("تسجيل الدخول")
+def login_screen(settings):
+    show_system_brand(settings)
+
+    st.subheader(
+        txt(settings["login_title"])
+        or "تسجيل الدخول"
+    )
 
     with st.form("login"):
         username = st.text_input("اسم المستخدم")
@@ -3355,10 +3606,12 @@ def main():
         )
         return
 
+    settings = system_settings_row()
+
     st.session_state.setdefault("user", None)
 
     if st.session_state.user is None:
-        login_screen()
+        login_screen(settings)
         return
 
     found = read(
@@ -3366,9 +3619,7 @@ def main():
         SELECT * FROM users
         WHERE id = ? AND is_active = 1
         """,
-        (
-            int(st.session_state.user["id"]),
-        )
+        (int(st.session_state.user["id"]),)
     )
 
     if found.empty:
@@ -3383,7 +3634,9 @@ def main():
         "SELECT * FROM companies WHERE id = 1"
     ).iloc[0]
 
-    show_header(company)
+    show_authenticated_header(
+        settings, company
+    )
 
     messages = st.session_state.pop(
         "save_messages", []
@@ -3405,7 +3658,6 @@ def main():
 
     if group == "الرئيسية":
         st.subheader("الأقسام الرئيسية")
-
         columns = st.columns(3)
         visible = 0
 
@@ -3421,7 +3673,6 @@ def main():
                 args=(group_name,),
                 use_container_width=True
             )
-
             visible += 1
 
         if not visible:
@@ -3494,6 +3745,9 @@ def main():
 
     elif page == "إعدادات الشركة":
         company_settings(company)
+
+    elif page == "إعدادات السيستم":
+        system_settings_page()
 
 
 if __name__ == "__main__":
