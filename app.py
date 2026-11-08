@@ -18,7 +18,7 @@ st.set_page_config(
 )
 
 DB = "erp_v8.db"
-BUILD = "TAREK-AFRICA-SALES-FILTER-1023"
+BUILD = "TAREK-EXPENSE-REPORTS-1024"
 
 MONTHS = [
     "يناير", "فبراير", "مارس", "أبريل",
@@ -309,10 +309,14 @@ GROUPS = {
     ],
     "مصروفات الأستاذ": [
         "مصروفات الأستاذ - مصروف",
-        "مصروفات الأستاذ - بنزين"
+        "مصروفات الأستاذ - بنزين",
+        "كشف حساب مصروفات الأستاذ والخزينة",
+        "ملخص مصروفات الأستاذ والخزينة"
     ],
     "الخزينة": [
-        "الخزينة - وارد", "الخزينة - منصرف"
+        "الخزينة - وارد", "الخزينة - منصرف",
+        "كشف حساب مصروفات الأستاذ والخزينة",
+        "ملخص مصروفات الأستاذ والخزينة"
     ],
     "سداد للأفريقية": [
         "الأفريقية - مبيعات",
@@ -2385,6 +2389,13 @@ def account_summary(supplier_side):
 
 
 def reports(page):
+    if page in {
+        "كشف حساب مصروفات الأستاذ والخزينة",
+        "ملخص مصروفات الأستاذ والخزينة"
+    }:
+        expense_report(page)
+        return
+
     supplier_side = page in {
         "كشف حساب مورد", "ملخص الموردين"
     }
@@ -2646,6 +2657,287 @@ def reports(page):
 
     if can(page, "export"):
         download(report, "report_" + page)
+
+
+def expense_report(page):
+    source_pages = [
+        "مصروفات الأستاذ - مصروف",
+        "مصروفات الأستاذ - بنزين",
+        "الخزينة - وارد",
+        "الخزينة - منصرف"
+    ]
+
+    allowed_sources = [
+        source
+        for source in source_pages
+        if can(source, "view")
+    ]
+
+    if not allowed_sources:
+        st.warning(
+            "لا توجد صلاحية عرض على أي مصدر من المصروفات "
+            "أو الخزينة."
+        )
+        return
+
+    frame = table_data("expenses")
+
+    allowed_mask = pd.Series(
+        False, index=frame.index
+    )
+
+    for source in allowed_sources:
+        configuration = PAGE_CONFIG[source]
+        source_mask = pd.Series(
+            True, index=frame.index
+        )
+
+        for column, value in configuration.get(
+            "fixed", {}
+        ).items():
+            source_mask &= (
+                frame[column].fillna("").astype(str)
+                == value
+            )
+
+        allowed_mask |= source_mask
+
+    frame = frame[allowed_mask]
+
+    frame["التاريخ"] = pd.to_datetime(
+        frame["expense_date"],
+        errors="coerce"
+    ).dt.date
+
+    left, right = st.columns(2)
+
+    start = left.date_input(
+        "من تاريخ",
+        value=date(date.today().year, 1, 1)
+    )
+
+    end = right.date_input(
+        "إلى تاريخ",
+        value=date.today()
+    )
+
+    if end < start:
+        st.error("الفترة غير صحيحة")
+        return
+
+    frame = frame[
+        (frame["التاريخ"] >= start)
+        & (frame["التاريخ"] <= end)
+    ]
+
+    with st.expander("الفلاتر", expanded=True):
+        columns = st.columns(3)
+
+        responsible_options = ["الكل"] + sorted(
+            frame["responsible"].dropna().astype(str).unique()
+        )
+
+        reviewer_options = ["الكل"] + sorted(
+            frame["reviewer"].dropna().astype(str).unique()
+        )
+
+        category_options = ["الكل"] + sorted(
+            frame["category"].dropna().astype(str).unique()
+        )
+
+        description_options = ["الكل"] + sorted(
+            frame["description"].dropna().astype(str).unique()
+        )
+
+        movement_options = ["الكل"] + sorted(
+            frame["expense_type"].dropna().astype(str).unique()
+        )
+
+        group_options = ["الكل"] + sorted(
+            frame["expense_group"].dropna().astype(str).unique()
+        )
+
+        responsible = columns[0].selectbox(
+            "المسؤول",
+            responsible_options,
+            key="expense_responsible"
+        )
+
+        reviewer = columns[1].selectbox(
+            "المراجع",
+            reviewer_options,
+            key="expense_reviewer"
+        )
+
+        category = columns[2].selectbox(
+            "التصنيف",
+            category_options,
+            key="expense_category"
+        )
+
+        description = columns[0].selectbox(
+            "البيان",
+            description_options,
+            key="expense_description"
+        )
+
+        movement_type = columns[1].selectbox(
+            "نوع الحركة",
+            movement_options,
+            key="expense_movement_type"
+        )
+
+        expense_group = columns[2].selectbox(
+            "مجموعة المصروف",
+            group_options,
+            key="expense_group_filter"
+        )
+
+        search = st.text_input(
+            "بحث في كل الحقول",
+            key="expense_search"
+        )
+
+    filters = {
+        "responsible": responsible,
+        "reviewer": reviewer,
+        "category": category,
+        "description": description,
+        "expense_type": movement_type,
+        "expense_group": expense_group
+    }
+
+    for column, selected in filters.items():
+        if selected != "الكل":
+            frame = frame[
+                frame[column].fillna("").astype(str)
+                == selected
+            ]
+
+    if search.strip():
+        mask = frame.astype(str).apply(
+            lambda column: column.str.contains(
+                search.strip(),
+                regex=False,
+                case=False,
+                na=False
+            )
+        ).any(axis=1)
+        frame = frame[mask]
+
+    labels = {
+        "id": "م",
+        "expense_date": "التاريخ",
+        "category": "التصنيف",
+        "description": "البيان",
+        "amount": "المبلغ",
+        "responsible": "المسؤول",
+        "reviewer": "المراجع",
+        "notes": "ملاحظات",
+        "external_link": "الرابط الخارجى",
+        "expense_group": "مجموعة المصروف",
+        "expense_type": "نوع الحركة"
+    }
+
+    report = frame.drop(
+        columns=["company_id"],
+        errors="ignore"
+    ).rename(columns=labels)
+
+    if page == "كشف حساب مصروفات الأستاذ والخزينة":
+        report = report.sort_values(
+            "التاريخ", ascending=True
+        )
+
+        running = 0.0
+        balances = []
+
+        for _, row in report.iterrows():
+            amount = num(row["المبلغ"])
+            movement = txt(row["نوع الحركة"])
+
+            if movement == "وارد":
+                running += amount
+            elif movement == "منصرف":
+                running -= amount
+            else:
+                running -= amount
+
+            balances.append(running)
+
+        report["الرصيد التراكمي"] = balances
+
+        st.caption(
+            "المصروف والمنصرف يقللان الرصيد، "
+            "والوارد يزيده. "
+            "الرصيد التراكمي يبدأ من صفر داخل الفترة المحددة."
+        )
+
+    else:
+        if report.empty:
+            st.info("لا توجد بيانات")
+            return
+
+        summary = report.groupby(
+            [
+                "مجموعة المصروف",
+                "نوع الحركة",
+                "التصنيف",
+                "المسؤول",
+                "المراجع"
+            ],
+            as_index=False,
+            dropna=False
+        ).agg(
+            {
+                "المبلغ": "sum",
+                "البيان": lambda values: " | ".join(
+                    sorted(
+                        set(
+                            txt(value)
+                            for value in values
+                            if txt(value)
+                        )
+                    )
+                ),
+                "م": "count"
+            }
+        ).rename(
+            columns={
+                "م": "عدد الحركات",
+                "المبلغ": "إجمالي المبلغ"
+            }
+        )
+
+        report = summary.sort_values(
+            [
+                "مجموعة المصروف",
+                "نوع الحركة",
+                "التصنيف",
+                "المسؤول"
+            ],
+            ascending=True
+        )
+
+        st.caption(
+            "الملخص يجمع الحركات المتشابهة "
+            "حسب المجموعة ونوع الحركة والتصنيف "
+            "والمسؤول والمراجع."
+        )
+
+    if report.empty:
+        st.info("لا توجد بيانات")
+        return
+
+    st.dataframe(
+        report, use_container_width=True
+    )
+
+    if can(page, "export"):
+        download(
+            report,
+            "expense_" + page
+        )
 
 
 def africa_page(page):
@@ -3771,7 +4063,9 @@ def main():
         "كشف حساب عميل",
         "ملخص العملاء",
         "كشف حساب مورد",
-        "ملخص الموردين"
+        "ملخص الموردين",
+        "كشف حساب مصروفات الأستاذ والخزينة",
+        "ملخص مصروفات الأستاذ والخزينة"
     }:
         reports(page)
 
