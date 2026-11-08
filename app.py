@@ -3,6 +3,7 @@ import json
 import uuid
 import hashlib
 import sqlite3
+import unicodedata
 from datetime import date
 
 import pandas as pd
@@ -15,26 +16,13 @@ st.set_page_config(
 )
 
 DB = "erp_v8.db"
-BUILD = "TAREK-PAYMENT-CREDIT-NOTES-426"
+BUILD = "TAREK-SUPPLIERS-EXPENSES-AFRICA-1108"
 
 MONTHS = [
     "يناير", "فبراير", "مارس", "أبريل",
     "مايو", "يونيو", "يوليو", "أغسطس",
     "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"
 ]
-
-PAYMENT_MODES = [
-    "كاش",
-    "آجل",
-    "على المبيع",
-    "فاتورة + فاتورة"
-]
-
-SPECIAL_PAYMENT_MODES = {
-    "كاش",
-    "على المبيع",
-    "فاتورة + فاتورة"
-}
 
 ACTIONS = {
     "view": "عرض",
@@ -47,11 +35,9 @@ ACTIONS = {
     "receive": "تغيير الاستلام"
 }
 
-# t = نص، n = رقم، d = تاريخ.
-RAW = {
-    "العملاء": (
-        "customers",
-        """
+# t = نص، n = رقم، d = تاريخ
+RAW_TABLES = {
+    "customers": """
 customer_code|كود العميل|t
 customer_name|اسم العميل|t
 payment_method|طريقة الدفع|t
@@ -63,11 +49,9 @@ branches|الفروع|t
 tax_number|الرقم الضريبي|t
 invoice_plus_invoice|تنبيه فاتورة + فاتورة|t
 credit_limit|الحد الأقصى للعميل|n
-"""
-    ),
-    "المبيعات": (
-        "sales",
-        """
+notes|ملاحظات|t
+""",
+    "sales": """
 invoice_no|رقم الفاتورة|t
 invoice_date|تاريخ الفاتورة|d
 customer_code|كود العميل|t
@@ -76,12 +60,10 @@ invoice_total|إجمالي الفاتورة|n
 before_tax|قيمة قبل الضريبة|n
 receipt_status|حالة الاستلام|t
 supply_order_no|رقم أمر التوريد|t
+notes|ملاحظات|t
 external_link|الرابط الخارجى|t
-"""
-    ),
-    "المرتجعات": (
-        "returns",
-        """
+""",
+    "returns": """
 return_date|تاريخ المرتجع|d
 return_no|رقم المرتجع|t
 original_invoice_no|رقم الفاتورة الأصلية|t
@@ -91,26 +73,22 @@ customer_name|اسم العميل|t
 return_total|إجمالي المرتجع|n
 before_tax|قبل الضريبة|n
 reason|سبب المرتجع|t
+notes|ملاحظات|t
 external_link|الرابط الخارجى|t
-"""
-    ),
-    "التحصيلات": (
-        "collections",
-        """
+""",
+    "collections": """
 collection_date|تاريخ التحصيل|d
 customer_code|كود العميل|t
 customer_name|اسم العميل|t
 invoice_no|رقم الفاتورة|t
 amount|مبلغ التحصيل|n
+collection_type|نوع التحصيل|t
 collector_name|المحصل|t
 month|الشهر|t
 year|السنة|n
 notes|ملاحظات|t
-"""
-    ),
-    "الخصومات": (
-        "discounts",
-        """
+""",
+    "discounts": """
 discount_date|تاريخ الخصم|d
 customer_code|كود العميل|t
 customer_name|اسم العميل|t
@@ -126,11 +104,8 @@ year|السنة|n
 correction|تصحيح|t
 notes|ملاحظات|t
 external_link|الرابط الخارجى|t
-"""
-    ),
-    "خصومات العقد": (
-        "contract_discounts",
-        """
+""",
+    "contract_discounts": """
 customer_code|كود العميل|t
 customer_name|اسم العميل|t
 discount_type|نوع الخصم|t
@@ -141,11 +116,9 @@ conditions|الشروط|t
 start_date|تاريخ البداية|d
 end_date|تاريخ النهاية|d
 apply_discount|تطبيق الخصم|t
-"""
-    ),
-    "المجلات": (
-        "magazines",
-        """
+notes|ملاحظات|t
+""",
+    "magazines": """
 customer_code|كود العميل|t
 customer_name|اسم العميل|t
 month|الشهر|t
@@ -153,118 +126,230 @@ year|السنة|n
 discount_value|قيمة خصم المجلة|n
 magazine_type|نوع المجلة|t
 notes|ملاحظات|t
-"""
-    ),
-    "العروض": (
-        "offers",
-        """
+""",
+    "offers": """
 customer_code|كود العميل|t
 customer_name|اسم العميل|t
 description|وصف العرض|t
 discount_percent|نسبة الخصم %|n
 start_date|تاريخ البداية|d
 end_date|تاريخ النهاية|d
-"""
-    ),
-    "الموردين": (
-        "suppliers",
-        """
+notes|ملاحظات|t
+""",
+    "suppliers": """
 supplier_code|كود المورد|t
 supplier_name|اسم المورد|t
 phone|الهاتف|t
 tax_number|الرقم الضريبي|t
 opening_balance|رصيد أول المدة|n
 notes|ملاحظات|t
-"""
-    ),
-    "فواتير الموردين": (
-        "supplier_invoices",
-        """
+""",
+    "supplier_invoices": """
 invoice_no|رقم الفاتورة|t
 invoice_date|تاريخ الفاتورة|d
 supplier_code|كود المورد|t
 supplier_name|اسم المورد|t
 invoice_total|إجمالي الفاتورة|n
-paid_amount|المدفوع|n
+before_tax|قبل الضريبة|n
+paid_amount|مدفوع مباشر عند تسجيل الفاتورة|n
 notes|ملاحظات|t
-"""
-    ),
-    "البنوك": (
-        "bank_accounts",
-        """
+external_link|الرابط الخارجى|t
+""",
+    "supplier_returns": """
+return_date|تاريخ المرتجع|d
+return_no|رقم المرتجع|t
+original_invoice_no|رقم الفاتورة الأصلية|t
+supply_reference|رقم التوريد أو المرجع|t
+supplier_code|كود المورد|t
+supplier_name|اسم المورد|t
+return_total|إجمالي المرتجع|n
+before_tax|قبل الضريبة|n
+reason|سبب المرتجع|t
+notes|ملاحظات|t
+external_link|الرابط الخارجى|t
+""",
+    "supplier_payments": """
+payment_date|تاريخ السداد|d
+payment_no|رقم السداد|t
+supplier_code|كود المورد|t
+supplier_name|اسم المورد|t
+invoice_no|رقم الفاتورة|t
+amount|مبلغ السداد|n
+payment_type|طريقة السداد|t
+responsible|مسؤول السداد|t
+reviewer|المراجع|t
+notes|ملاحظات|t
+external_link|الرابط الخارجى|t
+""",
+    "bank_accounts": """
 account_name|اسم الحساب|t
 bank_name|اسم البنك|t
 account_number|رقم الحساب|t
 opening_balance|رصيد أول المدة|n
-"""
-    ),
-    "الحركات البنكية": (
-        "bank_transactions",
-        """
+notes|ملاحظات|t
+""",
+    "bank_transactions": """
 transaction_date|تاريخ الحركة|d
 account_name|اسم الحساب|t
 transaction_type|نوع الحركة|t
 amount|المبلغ|n
 notes|ملاحظات|t
-"""
-    ),
-    "المصروفات": (
-        "expenses",
-        """
-expense_date|تاريخ المصروف|d
-expense_group|نوع المصروف|t
-expense_type|تفصيل المصروف|t
+""",
+    "expenses": """
+expense_date|التاريخ|d
+category|التصنيف|t
+description|البيان|t
 amount|المبلغ|n
+responsible|المسؤول|t
+reviewer|المراجع|t
 notes|ملاحظات|t
-"""
-    ),
-    "المسودة": (
-        "dropdown_options",
-        """
+external_link|الرابط الخارجى|t
+""",
+    "dropdown_options": """
 page|الصفحة|t
 field|القائمة|t
 value|القيمة|t
 """
-    )
 }
 
-CONFIG = {
-    page: (
-        table,
-        [
-            tuple(line.strip().split("|"))
-            for line in fields.strip().splitlines()
-            if line.strip()
-        ]
-    )
-    for page, (table, fields) in RAW.items()
+FIELDS = {
+    table: [
+        tuple(line.strip().split("|"))
+        for line in specification.strip().splitlines()
+        if line.strip()
+    ]
+    for table, specification in RAW_TABLES.items()
 }
 
-CLIENT_PAGES = [
-    "المبيعات", "المرتجعات", "التحصيلات",
-    "الخصومات", "خصومات العقد", "المجلات", "العروض"
-]
+EXTRAS = {
+    "sales": {
+        "due_date": "TEXT",
+        "payment_method": "TEXT",
+        "discount_note": "REAL",
+        "tax_amount": "REAL"
+    },
+    "returns": {
+        "due_date": "TEXT",
+        "tax_amount": "REAL"
+    },
+    "discounts": {
+        "discount_value": "REAL",
+        "tax_amount": "REAL"
+    },
+    "supplier_invoices": {
+        "tax_amount": "REAL"
+    },
+    "supplier_returns": {
+        "tax_amount": "REAL"
+    },
+    "expenses": {
+        "expense_group": "TEXT",
+        "expense_type": "TEXT"
+    }
+}
 
-PAGES = list(CONFIG) + [
-    "كشف الحساب", "الملخص",
-    "إدارة المستخدمين", "إعدادات الشركة"
-]
+PAGE_CONFIG = {
+    "العملاء": {"table": "customers"},
+    "المبيعات": {"table": "sales"},
+    "مرتجعات العملاء": {"table": "returns"},
+    "التحصيلات": {"table": "collections"},
+    "الخصومات": {"table": "discounts"},
+    "خصومات العقد": {"table": "contract_discounts"},
+    "المجلات": {"table": "magazines"},
+    "العروض": {"table": "offers"},
+    "الموردين": {"table": "suppliers"},
+    "فواتير الموردين": {"table": "supplier_invoices"},
+    "مرتجعات الموردين": {"table": "supplier_returns"},
+    "مدفوعات الموردين": {"table": "supplier_payments"},
+    "حسابات البنوك": {"table": "bank_accounts"},
+    "الحركات البنكية": {"table": "bank_transactions"},
+    "مصروفات الأستاذ - مصروف": {
+        "table": "expenses",
+        "fixed": {
+            "expense_group": "مصاريف الأستاذ",
+            "expense_type": "مصروف"
+        }
+    },
+    "مصروفات الأستاذ - بنزين": {
+        "table": "expenses",
+        "fixed": {
+            "expense_group": "مصاريف الأستاذ",
+            "expense_type": "بنزين"
+        }
+    },
+    "الخزينة - وارد": {
+        "table": "expenses",
+        "fixed": {
+            "expense_group": "مصاريف الخزينة",
+            "expense_type": "وارد"
+        }
+    },
+    "الخزينة - منصرف": {
+        "table": "expenses",
+        "fixed": {
+            "expense_group": "مصاريف الخزينة",
+            "expense_type": "منصرف"
+        }
+    },
+    "المسودة": {"table": "dropdown_options"}
+}
 
 GROUPS = {
     "حسابات العملاء والمبيعات": [
-        "العملاء"
-    ] + CLIENT_PAGES + [
-        "كشف الحساب", "الملخص"
+        "العملاء",
+        "المبيعات",
+        "مرتجعات العملاء",
+        "التحصيلات",
+        "الخصومات",
+        "خصومات العقد",
+        "المجلات",
+        "العروض",
+        "كشف حساب عميل",
+        "ملخص العملاء"
     ],
-    "الموردين": ["الموردين", "فواتير الموردين"],
-    "البنوك": ["البنوك", "الحركات البنكية"],
-    "المصروفات": ["المصروفات"],
+    "الموردين": [
+        "الموردين",
+        "فواتير الموردين",
+        "مرتجعات الموردين",
+        "مدفوعات الموردين",
+        "كشف حساب مورد",
+        "ملخص الموردين"
+    ],
+    "البنوك": [
+        "حسابات البنوك",
+        "الحركات البنكية"
+    ],
+    "مصروفات الأستاذ": [
+        "مصروفات الأستاذ - مصروف",
+        "مصروفات الأستاذ - بنزين"
+    ],
+    "الخزينة": [
+        "الخزينة - وارد",
+        "الخزينة - منصرف"
+    ],
+    "سداد للأفريقية": [
+        "الأفريقية - مبيعات",
+        "الأفريقية - مشتريات",
+        "الأفريقية - شيكات",
+        "الأفريقية - تحويلات"
+    ],
     "المسودة": ["المسودة"],
-    "الإعدادات": ["إدارة المستخدمين", "إعدادات الشركة"]
+    "الإعدادات": [
+        "إدارة المستخدمين",
+        "إعدادات الشركة"
+    ]
 }
 
+PAGES = [
+    page
+    for group_pages in GROUPS.values()
+    for page in group_pages
+]
+
 LISTS = {
-    "payment_method": PAYMENT_MODES,
+    "payment_method": [
+        "كاش", "آجل", "على المبيع", "فاتورة + فاتورة"
+    ],
     "due_type": [
         "يوم من تاريخ الفاتورة",
         "يوم من نهاية شهر الفاتورة",
@@ -282,14 +367,11 @@ LISTS = {
         "طارق", "مندوب مبيعات"
     ],
     "month": MONTHS,
-    "expense_group": [
-        "مصاريف الأستاذ",
-        "مصاريف الخزينة",
-        "سداد الافريقية"
+    "collection_type": [
+        "كاش", "شيك", "تحويل بنكى", "خصم من المديونية"
     ],
-    "expense_type": [
-        "بنزين", "مصاريف", "سداد الافريقية",
-        "وارد", "منصرف"
+    "payment_type": [
+        "كاش", "شيك", "تحويل بنكى"
     ],
     "transaction_type": ["إيداع", "سحب"],
     "conditions": [
@@ -298,21 +380,11 @@ LISTS = {
     ]
 }
 
-EXTRAS = {
-    "sales": {
-        "due_date": "TEXT",
-        "payment_method": "TEXT",
-        "discount_note": "REAL",
-        "tax_amount": "REAL"
-    },
-    "returns": {
-        "due_date": "TEXT",
-        "tax_amount": "REAL"
-    },
-    "discounts": {
-        "discount_value": "REAL",
-        "tax_amount": "REAL"
-    }
+LEGACY_ALIASES = {
+    "مرتجعات العملاء": "المرتجعات",
+    "حسابات البنوك": "البنوك",
+    "كشف حساب عميل": "كشف الحساب",
+    "ملخص العملاء": "الملخص"
 }
 
 
@@ -364,8 +436,47 @@ def normalize_mode(value):
     return value
 
 
+def normalized_text(value):
+    value = unicodedata.normalize("NFKC", txt(value))
+
+    for character in [
+        "\u200b", "\u200c", "\u200d",
+        "\u200e", "\u200f", "\ufeff"
+    ]:
+        value = value.replace(character, "")
+
+    return " ".join(value.split())
+
+
+def africa_text(value):
+    value = normalized_text(value)
+    value = value.replace("أ", "ا")
+    value = value.replace("إ", "ا")
+    value = value.replace("آ", "ا")
+    value = value.replace("ة", "ه")
+    value = value.replace("ى", "ي")
+    value = value.replace("ـ", "")
+
+    value = "".join(
+        character
+        for character in value
+        if unicodedata.category(character) != "Mn"
+    )
+
+    return value
+
+
+def is_africa_note(value):
+    normalized = africa_text(value)
+    return (
+        "سداد للافريقيه" in normalized
+        or "سداد الافريقيه" in normalized
+    )
+
+
 def initialize():
     connection = db()
+
     try:
         with connection:
             connection.executescript("""
@@ -405,7 +516,7 @@ def initialize():
                 );
             """)
 
-            for page, (table, fields) in CONFIG.items():
+            for table, fields in FIELDS.items():
                 connection.execute(
                     f"""
                     CREATE TABLE IF NOT EXISTS "{table}"(
@@ -422,15 +533,15 @@ def initialize():
                     )
                 }
 
-                columns = {
+                definitions = {
                     name: "REAL" if kind == "n" else "TEXT"
                     for name, label, kind in fields
                 }
 
-                columns["company_id"] = "INTEGER"
-                columns.update(EXTRAS.get(table, {}))
+                definitions["company_id"] = "INTEGER"
+                definitions.update(EXTRAS.get(table, {}))
 
-                for name, sql_type in columns.items():
+                for name, sql_type in definitions.items():
                     if name not in existing:
                         connection.execute(
                             f'ALTER TABLE "{table}" '
@@ -473,6 +584,7 @@ def initialize():
                         "طارق", "super_admin", 1, "ALL"
                     )
                 )
+
     finally:
         connection.close()
 
@@ -485,37 +597,41 @@ def can(page, action):
     if admin():
         return True
 
+    user_id = int(st.session_state.user["id"])
+
     result = read(
         """
         SELECT allowed FROM page_permissions
         WHERE user_id = ? AND page = ? AND action = ?
         """,
-        (
-            int(st.session_state.user["id"]),
-            page,
-            action
-        )
+        (user_id, page, action)
     )
 
-    return (
-        not result.empty
-        and bool(result.iloc[0]["allowed"])
-    )
+    if not result.empty:
+        return bool(result.iloc[0]["allowed"])
+
+    alias = LEGACY_ALIASES.get(page)
+
+    if alias:
+        result = read(
+            """
+            SELECT allowed FROM page_permissions
+            WHERE user_id = ? AND page = ? AND action = ?
+            """,
+            (user_id, alias, action)
+        )
+
+        if not result.empty:
+            return bool(result.iloc[0]["allowed"])
+
+    return False
 
 
 def require(page, action):
     if not can(page, "view") or not can(page, action):
-        raise ValueError("ليس لديك صلاحية تنفيذ هذه العملية")
-
-
-def data(page):
-    return read(
-        f"""
-        SELECT * FROM "{CONFIG[page][0]}"
-        WHERE company_id = 1
-        ORDER BY id DESC
-        """
-    )
+        raise ValueError(
+            "ليس لديك صلاحية تنفيذ هذه العملية"
+        )
 
 
 def audit(connection, action, details):
@@ -532,29 +648,73 @@ def audit(connection, action, details):
     )
 
 
-def choices(name, label):
-    found = read(
+def table_data(table):
+    return read(
+        f"""
+        SELECT * FROM "{table}"
+        WHERE company_id = 1
+        ORDER BY id DESC
         """
-        SELECT DISTINCT value
-        FROM dropdown_options
-        WHERE company_id = 1 AND field IN (?, ?)
-        ORDER BY id
-        """,
-        (name, label)
     )
 
-    if not found.empty:
-        return found["value"].dropna().astype(str).tolist()
 
-    return list(LISTS.get(name, []))
+def page_data(page):
+    configuration = PAGE_CONFIG[page]
+    frame = table_data(configuration["table"])
+
+    for column, value in configuration.get(
+        "fixed", {}
+    ).items():
+        frame = frame[
+            frame[column].fillna("").astype(str) == value
+        ]
+
+    return frame
 
 
-def picker(prefix, initial=""):
-    clients = data("العملاء")
+def party_details(table):
+    if table in {
+        "sales", "returns", "collections", "discounts",
+        "contract_discounts", "magazines", "offers"
+    }:
+        return (
+            "customers",
+            "customer_code",
+            "customer_name",
+            "كود العميل",
+            "اسم العميل"
+        )
+
+    if table in {
+        "supplier_invoices",
+        "supplier_returns",
+        "supplier_payments"
+    }:
+        return (
+            "suppliers",
+            "supplier_code",
+            "supplier_name",
+            "كود المورد",
+            "اسم المورد"
+        )
+
+    return None
+
+
+def party_picker(
+    prefix,
+    master_table,
+    code_column,
+    name_column,
+    code_label,
+    name_label,
+    initial=""
+):
+    master = table_data(master_table)
 
     mapping = {
-        str(row.customer_code): str(row.customer_name)
-        for row in clients.itertuples()
+        str(row[code_column]): str(row[name_column])
+        for _, row in master.iterrows()
     }
 
     code_key = prefix + "_code"
@@ -580,7 +740,7 @@ def picker(prefix, initial=""):
     left, right = st.columns(2)
 
     left.selectbox(
-        "كود العميل",
+        code_label,
         [""] + list(mapping),
         key=code_key,
         on_change=sync,
@@ -588,11 +748,11 @@ def picker(prefix, initial=""):
     )
 
     right.selectbox(
-        "اسم العميل",
+        name_label,
         [""] + list(mapping),
         format_func=lambda value: (
             f"{mapping[value]} — {value}"
-            if value else "اختر العميل"
+            if value else "اختر"
         ),
         key=name_key,
         on_change=sync,
@@ -603,36 +763,64 @@ def picker(prefix, initial=""):
     return code, mapping.get(code, "")
 
 
+def choices(name, label):
+    found = read(
+        """
+        SELECT DISTINCT value
+        FROM dropdown_options
+        WHERE company_id = 1 AND field IN (?, ?)
+        ORDER BY id
+        """,
+        (name, label)
+    )
+
+    if not found.empty:
+        return found["value"].dropna().astype(str).tolist()
+
+    return list(LISTS.get(name, []))
+
+
 def normalize_customer_values(values):
     values = dict(values)
-    method = normalize_mode(values.get("payment_method"))
-    duration_text = normalize_mode(values.get("due_days"))
 
-    if duration_text in PAYMENT_MODES:
-        if method and method != duration_text:
+    method = normalize_mode(
+        values.get("payment_method")
+    )
+
+    duration_mode = normalize_mode(
+        values.get("due_days")
+    )
+
+    if duration_mode in LISTS["payment_method"]:
+        if method and method != duration_mode:
             raise ValueError(
-                "تعارض في بيانات العميل: طريقة الدفع "
-                f"{method!r}، بينما خانة مدة الاستحقاق "
-                f"تحتوي {duration_text!r}. "
-                "صحح طريقة الدفع قبل الاستيراد."
+                "طريقة الدفع تتعارض مع النص الموجود "
+                "في مدة الاستحقاق. راجع بيانات العميل."
             )
 
-        method = duration_text
+        method = duration_mode
         values["due_days"] = 0
 
-    if method in SPECIAL_PAYMENT_MODES:
+    if method in {
+        "كاش", "على المبيع", "فاتورة + فاتورة"
+    }:
         values["due_days"] = 0
 
     values["payment_method"] = method
     return values
 
 
-def due_for_customer(customer, invoice_date):
-    method = normalize_mode(customer["payment_method"])
-    old_duration_mode = normalize_mode(customer["due_days"])
+def customer_due(customer, invoice_date):
+    method = normalize_mode(
+        customer["payment_method"]
+    )
 
-    if not method and old_duration_mode in PAYMENT_MODES:
-        method = old_duration_mode
+    duration_mode = normalize_mode(
+        customer["due_days"]
+    )
+
+    if not method and duration_mode in LISTS["payment_method"]:
+        method = duration_mode
 
     if method in ("على المبيع", "فاتورة + فاتورة"):
         return method, method
@@ -649,38 +837,37 @@ def due_for_customer(customer, invoice_date):
         duration = num(customer["due_days"])
     except (ValueError, TypeError):
         raise ValueError(
-            f"العميل {customer['customer_code']} "
-            f"— {customer['customer_name']}: "
-            "مدة الاستحقاق لطريقة الدفع الحالية "
-            "يجب أن تكون رقماً. القيمة المسجلة: "
-            f"{txt(customer['due_days'])!r}"
+            f"مدة الاستحقاق غير رقمية للعميل "
+            f"{customer['customer_code']}"
         ) from None
 
-    if not duration.is_integer() or duration < 0:
+    if duration < 0 or not duration.is_integer():
         raise ValueError(
             "مدة الاستحقاق يجب أن تكون عدداً صحيحاً غير سالب"
         )
 
-    days = int(duration)
+    duration = int(duration)
     due_type = txt(customer["due_type"])
 
     if "نهاية" in due_type:
         due = (
             invoice_date.replace(day=1)
             + pd.DateOffset(months=1)
-            + pd.Timedelta(days=days)
+            + pd.Timedelta(days=duration)
         )
-
     elif due_type == "شهر":
-        due = invoice_date + pd.DateOffset(months=days)
-
+        due = invoice_date + pd.DateOffset(
+            months=duration
+        )
     else:
-        due = invoice_date + pd.Timedelta(days=days)
+        due = invoice_date + pd.Timedelta(
+            days=duration
+        )
 
     return str(due.date()), method
 
 
-def remaining(connection, invoice):
+def invoice_remaining(connection, invoice):
     returned = connection.execute(
         """
         SELECT COALESCE(SUM(return_total), 0)
@@ -695,7 +882,7 @@ def remaining(connection, invoice):
         )
     ).fetchone()[0]
 
-    paid = connection.execute(
+    collected = connection.execute(
         """
         SELECT COALESCE(SUM(amount), 0)
         FROM collections
@@ -712,12 +899,50 @@ def remaining(connection, invoice):
     return max(
         num(invoice["invoice_total"])
         - num(returned)
-        - num(paid),
+        - num(collected),
         0
     )
 
 
-def previous_invoice_warning(customer_code, exclude_id=None):
+def supplier_invoice_remaining(connection, invoice):
+    returned = connection.execute(
+        """
+        SELECT COALESCE(SUM(return_total), 0)
+        FROM supplier_returns
+        WHERE company_id = 1
+          AND original_invoice_no = ?
+          AND supplier_code = ?
+        """,
+        (
+            invoice["invoice_no"],
+            invoice["supplier_code"]
+        )
+    ).fetchone()[0]
+
+    payments = connection.execute(
+        """
+        SELECT COALESCE(SUM(amount), 0)
+        FROM supplier_payments
+        WHERE company_id = 1
+          AND invoice_no = ?
+          AND supplier_code = ?
+        """,
+        (
+            invoice["invoice_no"],
+            invoice["supplier_code"]
+        )
+    ).fetchone()[0]
+
+    return max(
+        num(invoice["invoice_total"])
+        - num(invoice["paid_amount"])
+        - num(returned)
+        - num(payments),
+        0
+    )
+
+
+def invoice_warning(customer_code, exclude_id=None):
     invoices = read(
         """
         SELECT * FROM sales
@@ -737,13 +962,15 @@ def previous_invoice_warning(customer_code, exclude_id=None):
 
     try:
         for _, invoice in invoices.iterrows():
-            amount = remaining(connection, invoice)
+            balance = invoice_remaining(
+                connection, invoice
+            )
 
-            if amount > 0.005:
+            if balance > 0.005:
                 unpaid.append(
                     (
                         txt(invoice["invoice_no"]),
-                        amount
+                        balance
                     )
                 )
     finally:
@@ -752,49 +979,51 @@ def previous_invoice_warning(customer_code, exclude_id=None):
     if not unpaid:
         return ""
 
-    total = sum(amount for number, amount in unpaid)
-    numbers = "، ".join(number for number, amount in unpaid[:10])
-
     return (
         "تنبيه فاتورة + فاتورة: "
-        f"العميل لديه {len(unpaid)} فاتورة سابقة "
-        f"بمتبقي إجمالي {total:,.2f}. "
-        f"الفواتير: {numbers}. "
-        "الاتفاق يقتضي سداد القديم عند أخذ فاتورة جديدة. "
-        "النظام لم يسجل أي سداد تلقائي."
+        f"يوجد {len(unpaid)} فاتورة سابقة غير مسددة، "
+        f"بمتبقي {sum(value for number, value in unpaid):,.2f}. "
+        "الأرقام: "
+        + "، ".join(number for number, value in unpaid[:10])
+        + ". لم يسجل النظام سداداً تلقائياً."
     )
 
 
 def prepare(page, values, record_id=None):
+    configuration = PAGE_CONFIG[page]
+    table = configuration["table"]
+
     values = dict(values)
     warnings = []
 
-    if page == "العملاء":
-        original_duration = txt(values.get("due_days"))
-        original_method = txt(values.get("payment_method"))
-
+    if table == "customers":
         values = normalize_customer_values(values)
 
-        if (
-            normalize_mode(original_duration) in PAYMENT_MODES
-            and not original_method
-        ):
-            warnings.append(
-                "تم نقل طريقة الدفع من خانة مدة الاستحقاق "
-                "إلى طريقة الدفع وحفظ المدة صفرًا."
+    if table in ("returns", "supplier_returns"):
+        if not txt(values.get("return_no")):
+            prefix = "CR" if table == "returns" else "SR"
+
+            values["return_no"] = (
+                prefix + "-" + uuid.uuid4().hex[:16].upper()
             )
 
-    if page == "المرتجعات" and not txt(values.get("return_no")):
-        values["return_no"] = (
-            "CR-" + uuid.uuid4().hex[:16].upper()
-        )
+            warnings.append(
+                "تم إنشاء رقم داخلي للمرتجع: "
+                + values["return_no"]
+            )
 
-        warnings.append(
-            "تم إنشاء رقم داخلي للإشعار الدائن: "
-            + values["return_no"]
-        )
+    if table == "supplier_payments":
+        if not txt(values.get("payment_no")):
+            values["payment_no"] = (
+                "SP-" + uuid.uuid4().hex[:16].upper()
+            )
 
-    for name, label, kind in CONFIG[page][1]:
+            warnings.append(
+                "تم إنشاء رقم داخلي للسداد: "
+                + values["payment_no"]
+            )
+
+    for name, label, kind in FIELDS[table]:
         value = values.get(name)
 
         if kind == "n":
@@ -808,28 +1037,40 @@ def prepare(page, values, record_id=None):
 
         elif kind == "d":
             if not txt(value):
-                raise ValueError(f"{label}: التاريخ مطلوب")
+                raise ValueError(
+                    f"{label}: التاريخ مطلوب"
+                )
 
-            values[name] = str(pd.Timestamp(value).date())
+            values[name] = str(
+                pd.Timestamp(value).date()
+            )
 
         else:
             values[name] = txt(value)
 
+    values.update(
+        configuration.get("fixed", {})
+    )
+
     unique_field = {
-        "العملاء": "customer_code",
-        "المبيعات": "invoice_no",
-        "المرتجعات": "return_no",
-        "الموردين": "supplier_code",
-        "فواتير الموردين": "invoice_no"
-    }.get(page)
+        "customers": "customer_code",
+        "sales": "invoice_no",
+        "returns": "return_no",
+        "suppliers": "supplier_code",
+        "supplier_invoices": "invoice_no",
+        "supplier_returns": "return_no",
+        "supplier_payments": "payment_no"
+    }.get(table)
 
     if unique_field:
         if not values[unique_field]:
-            raise ValueError("الكود أو رقم المستند مطلوب")
+            raise ValueError(
+                "الكود أو رقم المستند مطلوب"
+            )
 
         duplicate = read(
             f"""
-            SELECT id FROM "{CONFIG[page][0]}"
+            SELECT * FROM "{table}"
             WHERE company_id = 1
               AND "{unique_field}" = ?
               AND id <> ?
@@ -841,170 +1082,218 @@ def prepare(page, values, record_id=None):
         )
 
         if not duplicate.empty:
+            row = duplicate.iloc[0]
+
             raise ValueError(
-                "الكود أو رقم المستند موجود بالفعل"
+                f"القيمة {values[unique_field]!r} "
+                f"موجودة بالفعل في السجل رقم {row['id']}. "
+                "راجع السجل قبل إعادة الاستيراد."
             )
 
-    if page == "العملاء" and not values["customer_name"]:
+    if table == "customers" and not values["customer_name"]:
         raise ValueError("اسم العميل مطلوب")
 
-    if page in CLIENT_PAGES:
-        clients = data("العملاء")
-        code = values["customer_code"]
-        name = values["customer_name"]
+    if table == "suppliers" and not values["supplier_name"]:
+        raise ValueError("اسم المورد مطلوب")
 
-        matches = (
-            clients[
-                clients["customer_code"].astype(str) == code
+    details = party_details(table)
+    party = None
+
+    if details:
+        master_table, code_col, name_col, _, _ = details
+        master = table_data(master_table)
+
+        code = values[code_col]
+        name = values[name_col]
+
+        if code:
+            matches = master[
+                master[code_col].astype(str) == code
             ]
-            if code
-            else clients[
-                clients["customer_name"].astype(str) == name
+        else:
+            matches = master[
+                master[name_col].map(normalized_text)
+                == normalized_text(name)
             ]
-        )
 
         if len(matches) != 1:
             raise ValueError(
-                "العميل غير موجود أو الاسم متكرر؛ استخدم الكود"
+                "الكود غير موجود أو الاسم متكرر؛ "
+                "استخدم الكود المسجل."
             )
 
-        customer = matches.iloc[0]
+        party = matches.iloc[0]
 
-        if name and name != txt(customer["customer_name"]):
-            raise ValueError("اسم العميل لا يطابق الكود")
-
-        values.update(
-            customer_code=str(customer["customer_code"]),
-            customer_name=str(customer["customer_name"])
-        )
-
-        if page == "المبيعات":
-            due, method = due_for_customer(
-                customer,
-                values["invoice_date"]
-            )
-
-            values.update(
-                due_date=due,
-                payment_method=method,
-                tax_amount=(
-                    values["invoice_total"]
-                    - values["before_tax"]
-                ),
-                discount_note=values["before_tax"] * 0.01
-            )
-
-            needs_warning = (
-                method == "فاتورة + فاتورة"
-                or txt(
-                    customer["invoice_plus_invoice"]
-                ) == "نعم"
-            )
-
-            if needs_warning:
-                message = previous_invoice_warning(
-                    values["customer_code"],
-                    record_id
-                )
-
-                if message:
-                    warnings.append(message)
-
-        if page in (
-            "المرتجعات",
-            "التحصيلات",
-            "الخصومات"
+        if (
+            name
+            and normalized_text(name)
+            != normalized_text(party[name_col])
         ):
-            invoice_field = (
-                "original_invoice_no"
-                if page == "المرتجعات"
-                else "invoice_no"
+            raise ValueError(
+                f"الاسم لا يطابق الكود {code!r}. "
+                f"اسم الملف: {name!r}. "
+                f"اسم النظام: {txt(party[name_col])!r}."
             )
 
-            invoice = txt(values.get(invoice_field))
+        values[code_col] = str(party[code_col])
+        values[name_col] = str(party[name_col])
 
-            if invoice:
-                found_invoice = read(
-                    """
-                    SELECT id FROM sales
-                    WHERE company_id = 1
-                      AND invoice_no = ?
-                      AND customer_code = ?
-                    """,
-                    (
-                        invoice,
-                        values["customer_code"]
-                    )
-                )
-
-                if found_invoice.empty:
-                    if page == "المرتجعات":
-                        old_reference = txt(
-                            values.get("supply_reference")
-                        )
-
-                        references = [
-                            part
-                            for part in [old_reference, invoice]
-                            if part
-                        ]
-
-                        values["supply_reference"] = " | ".join(
-                            dict.fromkeys(references)
-                        )
-
-                        values["original_invoice_no"] = ""
-
-                        warnings.append(
-                            f"الرقم {invoice!r} ليس فاتورة "
-                            "مسجلة لنفس العميل؛ تم الاحتفاظ "
-                            "به كمرجع خارجي، وحفظ المرتجع "
-                            "كخصم من حساب العميل العام."
-                        )
-
-                    else:
-                        raise ValueError(
-                            "الفاتورة غير مسجلة لهذا العميل"
-                        )
-
-            elif page == "التحصيلات":
-                raise ValueError(
-                    "رقم الفاتورة مطلوب للتحصيل"
-                )
-
-    if page == "المرتجعات":
-        values.update(
-            due_date=str(
-                (
-                    pd.Timestamp(values["return_date"])
-                    + pd.Timedelta(days=1)
-                ).date()
-            ),
-            tax_amount=(
-                values["return_total"]
-                - values["before_tax"]
-            )
+    if table == "sales":
+        due, method = customer_due(
+            party, values["invoice_date"]
         )
 
-    if page == "الخصومات":
-        discount = (
+        values.update(
+            due_date=due,
+            payment_method=method,
+            tax_amount=(
+                values["invoice_total"]
+                - values["before_tax"]
+            ),
+            discount_note=values["before_tax"] * 0.01
+        )
+
+        if (
+            method == "فاتورة + فاتورة"
+            or txt(party["invoice_plus_invoice"]) == "نعم"
+        ):
+            warning = invoice_warning(
+                values["customer_code"], record_id
+            )
+
+            if warning:
+                warnings.append(warning)
+
+    if table in (
+        "returns",
+        "collections",
+        "discounts",
+        "supplier_returns",
+        "supplier_payments"
+    ):
+        supplier_side = table in {
+            "supplier_returns",
+            "supplier_payments"
+        }
+
+        master_invoice_table = (
+            "supplier_invoices"
+            if supplier_side
+            else "sales"
+        )
+
+        party_code_column = (
+            "supplier_code"
+            if supplier_side
+            else "customer_code"
+        )
+
+        return_side = table in {
+            "returns",
+            "supplier_returns"
+        }
+
+        invoice_column = (
+            "original_invoice_no"
+            if return_side
+            else "invoice_no"
+        )
+
+        invoice_number = txt(
+            values.get(invoice_column)
+        )
+
+        if invoice_number:
+            found = read(
+                f"""
+                SELECT id FROM "{master_invoice_table}"
+                WHERE company_id = 1
+                  AND invoice_no = ?
+                  AND "{party_code_column}" = ?
+                """,
+                (
+                    invoice_number,
+                    values[party_code_column]
+                )
+            )
+
+            if found.empty:
+                if return_side:
+                    references = [
+                        txt(values.get("supply_reference")),
+                        invoice_number
+                    ]
+
+                    values["supply_reference"] = " | ".join(
+                        dict.fromkeys(
+                            value for value in references
+                            if value
+                        )
+                    )
+
+                    values["original_invoice_no"] = ""
+
+                    warnings.append(
+                        f"الرقم {invoice_number!r} "
+                        "غير مرتبط بفاتورة لهذا الحساب؛ "
+                        "تم حفظه كمرجع خارجي "
+                        "وتسجيل المرتجع على الحساب العام."
+                    )
+
+                else:
+                    raise ValueError(
+                        "رقم الفاتورة غير مسجل لهذا الحساب."
+                    )
+
+        elif table == "collections":
+            raise ValueError(
+                "رقم الفاتورة مطلوب للتحصيل."
+            )
+
+    if table == "returns":
+        values["due_date"] = str(
+            (
+                pd.Timestamp(values["return_date"])
+                + pd.Timedelta(days=1)
+            ).date()
+        )
+
+    if table in ("returns", "supplier_returns"):
+        values["tax_amount"] = (
+            values["return_total"]
+            - values["before_tax"]
+        )
+
+    if table == "supplier_invoices":
+        values["tax_amount"] = (
+            values["invoice_total"]
+            - values["before_tax"]
+        )
+
+    if table == "discounts":
+        values["discount_value"] = (
             values["invoice_total"]
             * values["discount_percent"] / 100
             if values["discount_type"] == "نسبة مئوية"
             else values["fixed_amount"]
         )
 
-        values.update(
-            discount_value=discount,
-            tax_amount=(
-                values["invoice_total"]
-                - values["before_tax"]
-            )
+        values["tax_amount"] = (
+            values["invoice_total"]
+            - values["before_tax"]
         )
 
-    if page in ("العروض", "خصومات العقد"):
+    if table in ("offers", "contract_discounts"):
         if values["end_date"] < values["start_date"]:
-            raise ValueError("تاريخ النهاية يسبق البداية")
+            raise ValueError(
+                "تاريخ النهاية يسبق البداية."
+            )
+
+    if table == "expenses" and values["amount"] < 0:
+        raise ValueError(
+            "المبلغ يجب أن يكون موجباً؛ "
+            "اختر صفحة الوارد أو المنصرف المناسبة."
+        )
 
     return values, warnings
 
@@ -1019,12 +1308,10 @@ def save(page, values, record_id=None, importing=False):
     require(page, action)
 
     values, warnings = prepare(
-        page,
-        values,
-        record_id
+        page, values, record_id
     )
 
-    table = CONFIG[page][0]
+    table = PAGE_CONFIG[page]["table"]
     connection = db()
 
     try:
@@ -1066,8 +1353,13 @@ def save(page, values, record_id=None, importing=False):
             audit(
                 connection,
                 action,
-                {"page": page, "id": record_id}
+                {
+                    "page": page,
+                    "table": table,
+                    "id": record_id
+                }
             )
+
     finally:
         connection.close()
 
@@ -1083,66 +1375,78 @@ def refresh():
 
 
 def record_form(page, row=None):
+    table = PAGE_CONFIG[page]["table"]
     record_id = int(row["id"]) if row is not None else None
     prefix = f"{page}_{record_id or 'new'}"
     values = {}
 
-    if page in CLIENT_PAGES:
-        code, name = picker(
+    details = party_details(table)
+
+    if details:
+        master, code_col, name_col, code_label, name_label = details
+
+        code, name = party_picker(
             prefix,
-            txt(row["customer_code"])
-            if record_id else ""
+            master,
+            code_col,
+            name_col,
+            code_label,
+            name_label,
+            txt(row[code_col]) if record_id else ""
         )
 
-        values.update(
-            customer_code=code,
-            customer_name=name
-        )
+        values[code_col] = code
+        values[name_col] = name
 
-        if page == "المبيعات" and code:
-            customer_rows = data("العملاء")
-            customer_rows = customer_rows[
-                customer_rows["customer_code"].astype(str)
-                == code
+        if table == "sales" and code:
+            clients = table_data("customers")
+            matched = clients[
+                clients["customer_code"].astype(str) == code
             ]
 
-            if not customer_rows.empty:
-                customer = customer_rows.iloc[0]
-                method = normalize_mode(
-                    customer["payment_method"]
-                )
+            if not matched.empty:
+                client = matched.iloc[0]
 
                 if (
-                    method == "فاتورة + فاتورة"
+                    normalize_mode(
+                        client["payment_method"]
+                    ) == "فاتورة + فاتورة"
                     or txt(
-                        customer["invoice_plus_invoice"]
+                        client["invoice_plus_invoice"]
                     ) == "نعم"
                 ):
-                    warning = previous_invoice_warning(
+                    warning = invoice_warning(
                         code, record_id
                     )
+
                     if warning:
                         st.warning(warning)
 
-    if page == "المرتجعات":
+    if table in ("returns", "supplier_returns"):
         st.info(
-            "يمكن ترك رقم المرتجع ورقم الفاتورة "
-            "والمرجع فارغين. ينشئ النظام رقمًا داخليًا "
-            "ويخصم القيمة من حساب العميل. "
-            "أي رقم فاتورة غير مطابق يُحفظ كمرجع خارجي."
+            "المرتجع لا يحتاج رقم فاتورة أو مرجع. "
+            "إذا تركت رقم المرتجع فارغاً يُنشأ رقم داخلي. "
+            "المرتجع العام يخصم من حساب العميل أو المورد."
         )
 
-    if page == "العملاء":
+    if table == "supplier_invoices":
+        st.warning(
+            "المدفوع المباشر يُخصم من رصيد المورد. "
+            "لا تسجل نفس المبلغ مرة ثانية "
+            "في مدفوعات الموردين."
+        )
+
+    if table == "supplier_payments":
         st.caption(
-            "على المبيع وفاتورة + فاتورة لا تحتاجان مدة "
-            "استحقاق. عند اختيارهما تُحفظ المدة صفرًا."
+            "رقم الفاتورة اختياري. "
+            "السداد بدون فاتورة يخصم من حساب المورد العام."
         )
 
     with st.form("form_" + prefix):
         columns = st.columns(3)
 
         for index, (name, label, kind) in enumerate(
-            CONFIG[page][1]
+            FIELDS[table]
         ):
             if name in values:
                 continue
@@ -1151,18 +1455,11 @@ def record_form(page, row=None):
             box = columns[index % 3]
             key = prefix + "_" + name
 
-            # مدة الاستحقاق نص في الواجهة فقط حتى يمكن
-            # معالجة البيانات القديمة قبل التحقق والحفظ.
-            if page == "العملاء" and name == "due_days":
+            if table == "customers" and name == "due_days":
                 values[name] = box.text_input(
                     label,
                     value=txt(old),
-                    key=key,
-                    help=(
-                        "للآجل: عدد الأيام أو الأشهر "
-                        "بحسب نوع الاستحقاق. "
-                        "للطرق الأخرى يمكن تركها فارغة."
-                    )
+                    key=key
                 )
 
             elif kind == "n":
@@ -1171,14 +1468,16 @@ def record_form(page, row=None):
                 except (ValueError, TypeError):
                     initial = 0.0
                     box.warning(
-                        f"قيمة قديمة غير رقمية: {txt(old)}"
+                        f"راجع القيمة القديمة: {txt(old)}"
                     )
 
                 if name == "year" and not txt(old):
                     initial = float(date.today().year)
 
                 values[name] = box.number_input(
-                    label, value=initial, key=key
+                    label,
+                    value=initial,
+                    key=key
                 )
 
             elif kind == "d":
@@ -1193,29 +1492,29 @@ def record_form(page, row=None):
 
                 values[name] = str(
                     box.date_input(
-                        label, value=initial, key=key
+                        label,
+                        value=initial,
+                        key=key
                     )
                 )
 
             else:
                 options = (
                     choices(name, label)
-                    if page != "المسودة"
+                    if table != "dropdown_options"
                     else []
                 )
 
-                if options:
-                    # عدم اختيار طريقة دفع افتراضية
-                    # للعميل الجديد دون قصد المستخدم.
-                    if (
-                        page == "العملاء"
-                        and name == "payment_method"
-                    ):
-                        options = [""] + [
-                            option for option in options
-                            if option
-                        ]
+                if (
+                    table == "customers"
+                    and name == "payment_method"
+                ):
+                    options = [""] + [
+                        option for option in options
+                        if option
+                    ]
 
+                if options:
                     old_text = txt(old)
 
                     if old_text and old_text not in options:
@@ -1226,13 +1525,17 @@ def record_form(page, row=None):
                         options,
                         index=(
                             options.index(old_text)
-                            if old_text in options else 0
+                            if old_text in options
+                            else 0
                         ),
                         key=key
                     )
+
                 else:
                     values[name] = box.text_input(
-                        label, value=txt(old), key=key
+                        label,
+                        value=txt(old),
+                        key=key
                     )
 
         submitted = st.form_submit_button(
@@ -1241,11 +1544,15 @@ def record_form(page, row=None):
 
     if submitted:
         try:
-            warnings = save(page, values, record_id)
+            warnings = save(
+                page, values, record_id
+            )
+
         except (
             ValueError, TypeError, sqlite3.Error
         ) as error:
             st.error(str(error))
+
         else:
             st.session_state["save_messages"] = (
                 ["تم الحفظ بنجاح"] + warnings
@@ -1261,8 +1568,11 @@ def excel_bytes(frame):
         engine="xlsxwriter"
     ) as writer:
         frame.to_excel(
-            writer, index=False, sheet_name="Data"
+            writer,
+            index=False,
+            sheet_name="Data"
         )
+
         sheet = writer.sheets["Data"]
         sheet.right_to_left()
         sheet.freeze_panes(1, 0)
@@ -1287,24 +1597,32 @@ def download(frame, key):
 
 
 def import_page(page):
-    fields = CONFIG[page][1]
+    table = PAGE_CONFIG[page]["table"]
+    fields = FIELDS[table]
     headers = [label for name, label, kind in fields]
 
     if can(page, "export"):
         download(
             pd.DataFrame(columns=headers),
-            "template_" + CONFIG[page][0]
+            "template_" + page
         )
 
     if not can(page, "import"):
         return
 
-    if page == "المرتجعات":
+    st.caption(
+        "في صفحات المصروفات يُحدد نوع الحركة "
+        "من الصفحة التي ترفع الملف داخلها."
+    )
+
+    if table in {
+        "returns", "supplier_returns", "supplier_payments"
+    }:
         st.warning(
-            "لو رفعت نفس الإشعارات مرة أخرى دون أرقام "
-            "مرتجعات، سيُنشأ رقم داخلي جديد لكل صف "
-            "وقد تتكرر المديونية الدائنة. "
-            "ارفع الصفوف التي لم تُحفظ فقط."
+            "المستندات التي لا تحتوي رقماً تحصل "
+            "على رقم داخلي جديد. "
+            "لا ترفع الصفوف المحفوظة مرة أخرى "
+            "حتى لا تتكرر الحركة."
         )
 
     uploaded = st.file_uploader(
@@ -1318,42 +1636,69 @@ def import_page(page):
 
     try:
         incoming = pd.read_excel(
-            uploaded, dtype=str
+            uploaded,
+            dtype=str
         ).fillna("")
 
         incoming.columns = [
             str(column).strip()
             for column in incoming.columns
         ]
+
     except Exception as error:
-        st.error(f"تعذرت قراءة الملف: {error}")
+        st.error(
+            f"تعذرت قراءة الملف: {error}"
+        )
         return
 
     if incoming.columns.duplicated().any():
         st.error("يوجد عنوان عمود مكرر")
         return
 
-    if page == "المرتجعات":
-        optional_headers = [
-            "رقم المرتجع",
-            "رقم الفاتورة الأصلية",
-            "رقم التوريد أو المرجع"
-        ]
+    # الأعمدة التالية اختيارية لاستيعاب القوالب السابقة.
+    optional_columns = {
+        "notes",
+        "external_link",
+        "supply_reference",
+        "collection_type"
+    }
 
-        for header in optional_headers:
-            if header not in incoming.columns:
-                incoming[header] = ""
+    if table in ("returns", "supplier_returns"):
+        optional_columns.update(
+            {"return_no", "original_invoice_no"}
+        )
+
+    if table == "supplier_payments":
+        optional_columns.update(
+            {"payment_no", "invoice_no"}
+        )
+
+    if table == "supplier_invoices":
+        optional_columns.update(
+            {"before_tax", "paid_amount"}
+        )
+
+    for name, label, kind in fields:
+        if name in optional_columns:
+            if label not in incoming.columns:
+                incoming[label] = ""
 
     if set(incoming.columns) != set(headers):
-        st.error("الأعمدة لا تطابق القالب")
+        st.error(
+            "الأعمدة لا تطابق قالب هذه الصفحة."
+        )
 
         missing = set(headers) - set(incoming.columns)
         extra = set(incoming.columns) - set(headers)
 
         if missing:
-            st.write("أعمدة ناقصة:", sorted(missing))
+            st.write(
+                "أعمدة ناقصة:", sorted(missing)
+            )
         if extra:
-            st.write("أعمدة إضافية:", sorted(extra))
+            st.write(
+                "أعمدة إضافية:", sorted(extra)
+            )
         return
 
     st.dataframe(
@@ -1365,7 +1710,7 @@ def import_page(page):
         "استيراد فعلي",
         key="import_" + page
     ):
-        count = 0
+        saved_count = 0
         errors = []
         warnings_report = []
 
@@ -1380,9 +1725,12 @@ def import_page(page):
                 }
 
                 messages = save(
-                    page, values, importing=True
+                    page,
+                    values,
+                    importing=True
                 )
-                count += 1
+
+                saved_count += 1
 
                 for message in messages:
                     warnings_report.append(
@@ -1402,30 +1750,48 @@ def import_page(page):
                     }
                 )
 
-        st.success(f"تم حفظ {count} صف فعلياً")
+        st.success(
+            f"تم حفظ {saved_count} صف فعلياً"
+        )
 
         if errors:
+            error_frame = pd.DataFrame(errors)
+
             st.warning(
                 f"لم يتم حفظ {len(errors)} صف"
             )
-            frame = pd.DataFrame(errors)
-            st.dataframe(frame, use_container_width=True)
-            download(frame, "import_errors")
+            st.dataframe(
+                error_frame,
+                use_container_width=True
+            )
+            download(
+                error_frame,
+                "import_errors_" + page
+            )
 
         if warnings_report:
-            st.info(
-                "تنبيهات لصفوف تم حفظها. "
-                "لا تعِد استيرادها بسبب وجود تنبيه."
+            warning_frame = pd.DataFrame(
+                warnings_report
             )
-            frame = pd.DataFrame(warnings_report)
-            st.dataframe(frame, use_container_width=True)
-            download(frame, "import_warnings")
+
+            st.info(
+                "هذه تنبيهات لصفوف تم حفظها؛ "
+                "لا تعِد رفعها بسبب التنبيه."
+            )
+            st.dataframe(
+                warning_frame,
+                use_container_width=True
+            )
+            download(
+                warning_frame,
+                "import_warnings_" + page
+            )
 
 
 def bulk_action(page, record_ids, action, options=None):
     require(page, action)
     options = options or {}
-    table = CONFIG[page][0]
+    table = PAGE_CONFIG[page]["table"]
     connection = db()
 
     try:
@@ -1441,56 +1807,109 @@ def bulk_action(page, record_ids, action, options=None):
 
                 if row is None:
                     raise ValueError(
-                        "أحد السجلات لم يعد موجوداً"
+                        "أحد السجلات لم يعد موجوداً."
                     )
 
+                for key, value in PAGE_CONFIG[page].get(
+                    "fixed", {}
+                ).items():
+                    if txt(row[key]) != value:
+                        raise ValueError(
+                            "السجل لا ينتمي لهذه الصفحة."
+                        )
+
                 if action == "delete":
-                    if page == "العملاء":
-                        for child in [
-                            "sales", "returns", "collections",
-                            "discounts", "magazines", "offers",
-                            "contract_discounts"
-                        ]:
+                    if table in ("customers", "suppliers"):
+                        supplier_side = table == "suppliers"
+
+                        code_column = (
+                            "supplier_code"
+                            if supplier_side
+                            else "customer_code"
+                        )
+
+                        children = (
+                            [
+                                "supplier_invoices",
+                                "supplier_returns",
+                                "supplier_payments"
+                            ]
+                            if supplier_side
+                            else [
+                                "sales", "returns", "collections",
+                                "discounts", "magazines",
+                                "offers", "contract_discounts"
+                            ]
+                        )
+
+                        for child in children:
                             linked = connection.execute(
                                 f"""
                                 SELECT id FROM "{child}"
                                 WHERE company_id = 1
-                                  AND customer_code = ?
+                                  AND "{code_column}" = ?
                                 LIMIT 1
                                 """,
-                                (row["customer_code"],)
+                                (row[code_column],)
                             ).fetchone()
 
                             if linked:
                                 raise ValueError(
-                                    "العميل مرتبط بحركات؛ "
-                                    "عالجها أولاً"
+                                    "الحساب مرتبط بحركات؛ "
+                                    "عالجها أولاً."
                                 )
 
-                    if page == "المبيعات":
-                        for child, column in [
-                            ("returns", "original_invoice_no"),
-                            ("collections", "invoice_no"),
-                            ("discounts", "invoice_no")
-                        ]:
+                    if table in (
+                        "sales", "supplier_invoices"
+                    ):
+                        supplier_side = (
+                            table == "supplier_invoices"
+                        )
+
+                        code_column = (
+                            "supplier_code"
+                            if supplier_side
+                            else "customer_code"
+                        )
+
+                        links = (
+                            [
+                                (
+                                    "supplier_returns",
+                                    "original_invoice_no"
+                                ),
+                                (
+                                    "supplier_payments",
+                                    "invoice_no"
+                                )
+                            ]
+                            if supplier_side
+                            else [
+                                ("returns", "original_invoice_no"),
+                                ("collections", "invoice_no"),
+                                ("discounts", "invoice_no")
+                            ]
+                        )
+
+                        for child, invoice_column in links:
                             linked = connection.execute(
                                 f"""
                                 SELECT id FROM "{child}"
                                 WHERE company_id = 1
-                                  AND "{column}" = ?
-                                  AND customer_code = ?
+                                  AND "{invoice_column}" = ?
+                                  AND "{code_column}" = ?
                                 LIMIT 1
                                 """,
                                 (
                                     row["invoice_no"],
-                                    row["customer_code"]
+                                    row[code_column]
                                 )
                             ).fetchone()
 
                             if linked:
                                 raise ValueError(
                                     "الفاتورة مرتبطة بحركات؛ "
-                                    "عالجها أولاً"
+                                    "عالجها أولاً."
                                 )
 
                     connection.execute(
@@ -1503,11 +1922,12 @@ def bulk_action(page, record_ids, action, options=None):
 
                 elif (
                     action == "receive"
-                    and page == "المبيعات"
+                    and table == "sales"
                 ):
                     connection.execute(
                         """
-                        UPDATE sales SET receipt_status = ?
+                        UPDATE sales
+                        SET receipt_status = ?
                         WHERE company_id = 1 AND id = ?
                         """,
                         (
@@ -1518,7 +1938,7 @@ def bulk_action(page, record_ids, action, options=None):
 
                 elif (
                     action == "settle"
-                    and page == "المبيعات"
+                    and table == "sales"
                 ):
                     require("التحصيلات", "add")
 
@@ -1537,28 +1957,35 @@ def bulk_action(page, record_ids, action, options=None):
 
                     if unallocated:
                         raise ValueError(
-                            "العميل لديه إشعارات دائنة "
-                            "غير مخصصة لفواتير. "
+                            "العميل لديه إشعارات دائنة عامة. "
                             "راجع صافي كشف حسابه وسجل "
-                            "التحصيل يدويًا بدل سداد "
-                            "كامل متبقي الفواتير جماعيًا."
+                            "التحصيل يدوياً."
                         )
 
-                    amount = remaining(connection, row)
+                    amount = invoice_remaining(
+                        connection, row
+                    )
+
                     payment_date = options["date"]
 
                     if amount > 0.005:
                         connection.execute(
                             """
                             INSERT INTO collections(
-                                company_id, collection_date,
-                                customer_code, customer_name,
-                                invoice_no, amount,
-                                collector_name, month,
-                                year, notes
+                                company_id,
+                                collection_date,
+                                customer_code,
+                                customer_name,
+                                invoice_no,
+                                amount,
+                                collection_type,
+                                collector_name,
+                                month,
+                                year,
+                                notes
                             )
                             VALUES(
-                                1, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                                1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                             )
                             """,
                             (
@@ -1567,6 +1994,7 @@ def bulk_action(page, record_ids, action, options=None):
                                 row["customer_name"],
                                 row["invoice_no"],
                                 amount,
+                                options["collection_type"],
                                 options["collector"],
                                 MONTHS[
                                     payment_date.month - 1
@@ -1577,7 +2005,9 @@ def bulk_action(page, record_ids, action, options=None):
                         )
 
                 else:
-                    raise ValueError("الإجراء غير متاح")
+                    raise ValueError(
+                        "الإجراء غير متاح لهذه الصفحة."
+                    )
 
             audit(
                 connection,
@@ -1585,17 +2015,20 @@ def bulk_action(page, record_ids, action, options=None):
                 {
                     "page": page,
                     "ids": [
-                        int(value) for value in record_ids
+                        int(value)
+                        for value in record_ids
                     ]
                 }
             )
+
     finally:
         connection.close()
 
 
 def grid(page):
-    frame = data(page)
-    table, fields = CONFIG[page]
+    configuration = PAGE_CONFIG[page]
+    table = configuration["table"]
+    frame = page_data(page)
 
     search = st.text_input(
         "بحث",
@@ -1611,10 +2044,12 @@ def grid(page):
                 na=False
             )
         ).any(axis=1)
+
         frame = frame[mask]
 
     labels = {
-        name: label for name, label, kind in fields
+        name: label
+        for name, label, kind in FIELDS[table]
     }
 
     labels.update(
@@ -1624,7 +2059,9 @@ def grid(page):
             "payment_method": "طريقة الدفع",
             "tax_amount": "مبلغ الضريبة",
             "discount_note": "إشعار خصم 1%",
-            "discount_value": "قيمة الخصم"
+            "discount_value": "قيمة الخصم",
+            "expense_group": "مجموعة المصروف",
+            "expense_type": "نوع الحركة"
         }
     )
 
@@ -1633,33 +2070,41 @@ def grid(page):
         errors="ignore"
     ).rename(columns=labels)
 
-    if page == "المبيعات" and not frame.empty:
+    if table in ("sales", "supplier_invoices"):
         connection = db()
+
         try:
-            shown["المتبقي المحسوب"] = [
-                remaining(connection, row)
-                for _, row in frame.iterrows()
-            ]
+            calculator = (
+                invoice_remaining
+                if table == "sales"
+                else supplier_invoice_remaining
+            )
+
+            if not frame.empty:
+                shown["متبقي الفاتورة"] = [
+                    calculator(connection, row)
+                    for _, row in frame.iterrows()
+                ]
+
         finally:
             connection.close()
 
         st.caption(
-            "متبقي كل فاتورة يشمل التحصيلات "
-            "والمرتجعات المرتبطة بها فقط. "
-            "الإشعارات الدائنة العامة تخصم "
-            "من صافي حساب العميل."
+            "متبقي الفاتورة يشمل الحركات المرتبطة بها فقط. "
+            "الحركات العامة تظهر في كشف الحساب والملخص."
         )
 
-    if page == "المرتجعات" and not frame.empty:
-        shown["نوع الربط"] = [
-            "مرتبط بفاتورة"
-            if txt(value)
-            else "خصم من حساب العميل"
-            for value in frame["original_invoice_no"]
-        ]
+    if table in ("returns", "supplier_returns"):
+        if not frame.empty:
+            shown["نوع الربط"] = [
+                "مرتبط بفاتورة"
+                if txt(value)
+                else "على الحساب العام"
+                for value in frame["original_invoice_no"]
+            ]
 
     if can(page, "export"):
-        download(shown, "data_" + table)
+        download(shown, "data_" + page)
 
     if frame.empty:
         st.info("لا توجد بيانات")
@@ -1704,6 +2149,7 @@ def grid(page):
         state["revision"] += 1
 
     model = shown.copy()
+
     model.insert(
         0,
         "تحديد",
@@ -1711,9 +2157,11 @@ def grid(page):
             state["ids"]
         ).to_numpy()
     )
+
     model["إجراء"] = ""
 
     row_options = [""]
+
     if can(page, "edit"):
         row_options.append("تعديل")
     if can(page, "delete"):
@@ -1755,8 +2203,7 @@ def grid(page):
 
     if len(requested) > 1:
         st.info(
-            "اختر إجراء صف واحد "
-            "أو استخدم الإجراءات الجماعية"
+            "اختر إجراء صف واحد أو استخدم الإجراءات الجماعية."
         )
 
     elif len(requested) == 1:
@@ -1797,7 +2244,10 @@ def grid(page):
             st.subheader(
                 f"تعديل السجل {editing[1]}"
             )
-            record_form(page, match.iloc[0])
+
+            record_form(
+                page, match.iloc[0]
+            )
 
             if st.button(
                 "إلغاء التعديل",
@@ -1812,7 +2262,7 @@ def grid(page):
         return
 
     with st.expander(
-        "إعدادات وإجراءات المحدد — "
+        "إجراءات المحدد — "
         f"{len(selected_ids)} سجل",
         expanded=True
     ):
@@ -1823,7 +2273,7 @@ def grid(page):
             operations["حذف المحدد"] = "delete"
 
         if (
-            page == "المبيعات"
+            table == "sales"
             and can(page, "receive")
         ):
             operations[
@@ -1831,17 +2281,17 @@ def grid(page):
             ] = "receive"
 
         if (
-            page == "المبيعات"
+            table == "sales"
             and can(page, "settle")
             and can("التحصيلات", "add")
         ):
             operations[
-                "سداد المتبقي بالكامل"
+                "سداد كامل المتبقي"
             ] = "settle"
 
         if not operations:
             st.info(
-                "لا توجد عمليات جماعية مصرح بها"
+                "لا توجد إجراءات جماعية مصرح بها."
             )
             return
 
@@ -1863,14 +2313,20 @@ def grid(page):
             details["date"] = st.date_input(
                 "تاريخ السداد"
             )
+
             details["collector"] = st.text_input(
-                "المحصل", value="طارق"
+                "المحصل",
+                value="طارق"
             )
+
+            details["collection_type"] = st.selectbox(
+                "نوع التحصيل",
+                LISTS["collection_type"]
+            )
+
             st.caption(
-                "يسجل تحصيلات فعلية. لا يخصص "
-                "الخصومات والمجلات على الفواتير تلقائيًا. "
-                "العميل ذو المرتجعات غير المخصصة "
-                "يحتاج مراجعة حسابه قبل السداد الجماعي."
+                "يسجل تحصيلات فعلية. "
+                "لا يخصص الخصومات والمجلات على الفواتير."
             )
 
         confirmed = st.checkbox(
@@ -1880,7 +2336,7 @@ def grid(page):
         )
 
         if st.button(
-            "تنفيذ على المحدد",
+            "تنفيذ",
             disabled=not confirmed,
             key="execute_" + page
         ):
@@ -1905,10 +2361,750 @@ def grid(page):
                 refresh()
 
 
+def supplier_summary():
+    suppliers = table_data("suppliers")
+
+    result = suppliers[
+        [
+            "supplier_code",
+            "supplier_name",
+            "opening_balance"
+        ]
+    ].copy()
+
+    for table, amount_column, label in [
+        (
+            "supplier_invoices",
+            "invoice_total",
+            "إجمالي المشتريات"
+        ),
+        (
+            "supplier_invoices",
+            "paid_amount",
+            "مدفوع مباشر"
+        ),
+        (
+            "supplier_returns",
+            "return_total",
+            "إجمالي المرتجعات"
+        ),
+        (
+            "supplier_payments",
+            "amount",
+            "إجمالي المدفوعات"
+        )
+    ]:
+        frame = table_data(table)
+
+        frame[amount_column] = pd.to_numeric(
+            frame[amount_column],
+            errors="coerce"
+        ).fillna(0)
+
+        totals = frame.groupby(
+            "supplier_code"
+        )[amount_column].sum()
+
+        result[label] = (
+            result["supplier_code"]
+            .map(totals)
+            .fillna(0)
+        )
+
+    result["المستحق للمورد"] = (
+        pd.to_numeric(
+            result["opening_balance"],
+            errors="coerce"
+        ).fillna(0)
+        + result["إجمالي المشتريات"]
+        - result["مدفوع مباشر"]
+        - result["إجمالي المرتجعات"]
+        - result["إجمالي المدفوعات"]
+    )
+
+    return result
+
+
+def customer_summary():
+    clients = table_data("customers")
+
+    result = clients[
+        [
+            "customer_code",
+            "customer_name",
+            "payment_method",
+            "opening_balance"
+        ]
+    ].copy()
+
+    for table, amount_column, label in [
+        ("sales", "invoice_total", "المبيعات"),
+        ("returns", "return_total", "المرتجعات"),
+        ("collections", "amount", "التحصيلات"),
+        ("discounts", "discount_value", "الخصومات"),
+        ("magazines", "discount_value", "المجلات")
+    ]:
+        frame = table_data(table)
+
+        frame[amount_column] = pd.to_numeric(
+            frame[amount_column],
+            errors="coerce"
+        ).fillna(0)
+
+        totals = frame.groupby(
+            "customer_code"
+        )[amount_column].sum()
+
+        result[label] = (
+            result["customer_code"]
+            .map(totals)
+            .fillna(0)
+        )
+
+    result["المستحق على العميل"] = (
+        pd.to_numeric(
+            result["opening_balance"],
+            errors="coerce"
+        ).fillna(0)
+        + result["المبيعات"]
+        - result["المرتجعات"]
+        - result["التحصيلات"]
+        - result["الخصومات"]
+        - result["المجلات"]
+    )
+
+    return result
+
+
+def reports(page):
+    supplier_side = page in {
+        "كشف حساب مورد",
+        "ملخص الموردين"
+    }
+
+    source_pages = (
+        [
+            "الموردين",
+            "فواتير الموردين",
+            "مرتجعات الموردين",
+            "مدفوعات الموردين"
+        ]
+        if supplier_side
+        else [
+            "العملاء",
+            "المبيعات",
+            "مرتجعات العملاء",
+            "التحصيلات",
+            "الخصومات",
+            "المجلات"
+        ]
+    )
+
+    if not all(
+        can(source, "view")
+        for source in source_pages
+    ):
+        st.warning(
+            "التقرير يحتاج صلاحية عرض جميع مصادره."
+        )
+        return
+
+    if page in {
+        "ملخص العملاء",
+        "ملخص الموردين"
+    }:
+        search = st.text_input(
+            "اكتب الكل أو الاسم أو الكود"
+        )
+
+        if not search.strip():
+            st.info("مخفي")
+            return
+
+        report = (
+            supplier_summary()
+            if supplier_side
+            else customer_summary()
+        )
+
+        code_column = (
+            "supplier_code"
+            if supplier_side
+            else "customer_code"
+        )
+
+        name_column = (
+            "supplier_name"
+            if supplier_side
+            else "customer_name"
+        )
+
+        if search.strip() != "الكل":
+            mask = report[
+                [code_column, name_column]
+            ].astype(str).apply(
+                lambda column: column.str.contains(
+                    search,
+                    regex=False,
+                    na=False
+                )
+            ).any(axis=1)
+
+            report = report[mask]
+
+        report = report.rename(
+            columns={
+                "supplier_code": "كود المورد",
+                "supplier_name": "اسم المورد",
+                "customer_code": "كود العميل",
+                "customer_name": "اسم العميل",
+                "payment_method": "طريقة الدفع",
+                "opening_balance": "رصيد أول المدة"
+            }
+        )
+
+    else:
+        master_table = (
+            "suppliers" if supplier_side else "customers"
+        )
+
+        code_column = (
+            "supplier_code"
+            if supplier_side
+            else "customer_code"
+        )
+
+        name_column = (
+            "supplier_name"
+            if supplier_side
+            else "customer_name"
+        )
+
+        code, name = party_picker(
+            "report_" + page,
+            master_table,
+            code_column,
+            name_column,
+            "الكود",
+            "الاسم"
+        )
+
+        if not code:
+            return
+
+        left, right = st.columns(2)
+
+        start = left.date_input(
+            "من تاريخ",
+            value=date(2024, 1, 1)
+        )
+
+        end = right.date_input(
+            "إلى تاريخ",
+            value=date.today()
+        )
+
+        if end < start:
+            st.error("الفترة غير صحيحة")
+            return
+
+        master = table_data(master_table)
+
+        account = master[
+            master[code_column].astype(str) == code
+        ].iloc[0]
+
+        balance = num(
+            account["opening_balance"]
+        )
+
+        movements = []
+
+        definitions = (
+            [
+                (
+                    "supplier_invoices",
+                    "invoice_date",
+                    "invoice_total",
+                    1,
+                    "مشتريات",
+                    "invoice_no"
+                ),
+                (
+                    "supplier_returns",
+                    "return_date",
+                    "return_total",
+                    -1,
+                    "مرتجع مورد",
+                    "return_no"
+                ),
+                (
+                    "supplier_payments",
+                    "payment_date",
+                    "amount",
+                    -1,
+                    "سداد مورد",
+                    "payment_no"
+                )
+            ]
+            if supplier_side
+            else [
+                (
+                    "sales", "invoice_date",
+                    "invoice_total", 1,
+                    "مبيعات", "invoice_no"
+                ),
+                (
+                    "returns", "return_date",
+                    "return_total", -1,
+                    "إشعار دائن", "return_no"
+                ),
+                (
+                    "collections", "collection_date",
+                    "amount", -1,
+                    "تحصيل", "invoice_no"
+                ),
+                (
+                    "discounts", "discount_date",
+                    "discount_value", -1,
+                    "خصم", "invoice_no"
+                )
+            ]
+        )
+
+        for (
+            table,
+            date_column,
+            amount_column,
+            sign,
+            kind,
+            reference_column
+        ) in definitions:
+            frame = table_data(table)
+
+            frame = frame[
+                frame[code_column].astype(str) == code
+            ]
+
+            for _, row in frame.iterrows():
+                parsed = pd.to_datetime(
+                    row[date_column],
+                    errors="coerce"
+                )
+
+                if pd.isna(parsed):
+                    continue
+
+                movements.append(
+                    {
+                        "date": parsed.date(),
+                        "type": kind,
+                        "reference": txt(
+                            row.get(reference_column)
+                        ),
+                        "notes": txt(
+                            row.get("notes")
+                        ),
+                        "value": (
+                            sign * num(
+                                row.get(amount_column)
+                            )
+                        )
+                    }
+                )
+
+                if table == "supplier_invoices":
+                    direct = num(
+                        row.get("paid_amount")
+                    )
+
+                    if direct:
+                        movements.append(
+                            {
+                                "date": parsed.date(),
+                                "type": "مدفوع مباشر بالفاتورة",
+                                "reference": txt(
+                                    row["invoice_no"]
+                                ),
+                                "notes": (
+                                    "مدفوع مسجل داخل "
+                                    "فاتورة المشتريات"
+                                ),
+                                "value": -direct
+                            }
+                        )
+
+        if not supplier_side:
+            magazines = table_data("magazines")
+
+            magazines = magazines[
+                magazines["customer_code"].astype(str)
+                == code
+            ]
+
+            for _, row in magazines.iterrows():
+                month = txt(row["month"])
+                year = int(num(row["year"]))
+
+                if month in MONTHS and year:
+                    movements.append(
+                        {
+                            "date": date(
+                                year,
+                                MONTHS.index(month) + 1,
+                                1
+                            ),
+                            "type": "خصم مجلة",
+                            "reference": txt(
+                                row["magazine_type"]
+                            ),
+                            "notes": txt(
+                                row["notes"]
+                            ),
+                            "value": -num(
+                                row["discount_value"]
+                            )
+                        }
+                    )
+
+        balance += sum(
+            movement["value"]
+            for movement in movements
+            if movement["date"] < start
+        )
+
+        output = [
+            {
+                "التاريخ": str(start),
+                "النوع": "رصيد بداية الفترة",
+                "المستند": "",
+                "زيادة المستحق": 0,
+                "تخفيض المستحق": 0,
+                "الرصيد": balance,
+                "ملاحظات": ""
+            }
+        ]
+
+        for movement in sorted(
+            movements,
+            key=lambda value: value["date"]
+        ):
+            if not (
+                start <= movement["date"] <= end
+            ):
+                continue
+
+            value = movement["value"]
+            balance += value
+
+            output.append(
+                {
+                    "التاريخ": str(
+                        movement["date"]
+                    ),
+                    "النوع": movement["type"],
+                    "المستند": movement["reference"],
+                    "زيادة المستحق": max(value, 0),
+                    "تخفيض المستحق": max(-value, 0),
+                    "الرصيد": balance,
+                    "ملاحظات": movement["notes"]
+                }
+            )
+
+        report = pd.DataFrame(output)
+
+        st.subheader(
+            f"{name} — {code}"
+        )
+
+        if supplier_side:
+            st.caption(
+                "الرصيد الموجب مستحق للمورد. "
+                "الرصيد السالب يمثل زيادة سداد "
+                "أو رصيداً لصالحك."
+            )
+        else:
+            st.caption(
+                "الرصيد الموجب مستحق على العميل. "
+                "خصم المجلة مؤرخ بأول يوم من شهره."
+            )
+
+    st.dataframe(
+        report,
+        use_container_width=True
+    )
+
+    if can(page, "export"):
+        download(
+            report,
+            "report_" + page
+        )
+
+
+def africa_page(page):
+    if page == "الأفريقية - مبيعات":
+        sources = [
+            (
+                "المبيعات",
+                "sales",
+                "invoice_date",
+                "invoice_no",
+                "customer_name",
+                "invoice_total",
+                "مبيعات"
+            )
+        ]
+
+    elif page == "الأفريقية - مشتريات":
+        sources = [
+            (
+                "فواتير الموردين",
+                "supplier_invoices",
+                "invoice_date",
+                "invoice_no",
+                "supplier_name",
+                "invoice_total",
+                "فاتورة مشتريات"
+            ),
+            (
+                "مرتجعات الموردين",
+                "supplier_returns",
+                "return_date",
+                "return_no",
+                "supplier_name",
+                "return_total",
+                "مرتجع مورد"
+            ),
+            (
+                "مدفوعات الموردين",
+                "supplier_payments",
+                "payment_date",
+                "payment_no",
+                "supplier_name",
+                "amount",
+                "سداد مورد"
+            )
+        ]
+
+    elif page == "الأفريقية - شيكات":
+        sources = [
+            (
+                "التحصيلات",
+                "collections",
+                "collection_date",
+                "invoice_no",
+                "customer_name",
+                "amount",
+                "تحصيل"
+            )
+        ]
+
+    else:
+        sources = [
+            (
+                "expenses",
+                "expenses",
+                "expense_date",
+                "id",
+                "responsible",
+                "amount",
+                "حركة مصروفات"
+            )
+        ]
+
+    output = []
+    hidden_sources = []
+
+    for (
+        source_page,
+        table,
+        date_column,
+        reference_column,
+        party_column,
+        amount_column,
+        kind
+    ) in sources:
+        if table != "expenses":
+            if not can(source_page, "view"):
+                hidden_sources.append(source_page)
+                continue
+
+        frame = table_data(table)
+
+        if table == "expenses" and not admin():
+            allowed_mask = pd.Series(
+                False,
+                index=frame.index
+            )
+
+            for expense_page, config in PAGE_CONFIG.items():
+                if (
+                    config["table"] != "expenses"
+                    or not can(expense_page, "view")
+                ):
+                    continue
+
+                mask = pd.Series(
+                    True,
+                    index=frame.index
+                )
+
+                for column, value in config.get(
+                    "fixed", {}
+                ).items():
+                    mask &= (
+                        frame[column]
+                        .fillna("")
+                        .astype(str)
+                        == value
+                    )
+
+                allowed_mask |= mask
+
+            frame = frame[allowed_mask]
+
+        frame = frame[
+            frame["notes"].map(is_africa_note)
+        ]
+
+        for _, row in frame.iterrows():
+            direction = ""
+            description = ""
+
+            if table == "expenses":
+                direction = (
+                    txt(row.get("expense_group"))
+                    + " / "
+                    + txt(row.get("expense_type"))
+                )
+                description = txt(
+                    row.get("description")
+                )
+
+            elif table == "collections":
+                direction = txt(
+                    row.get("collection_type")
+                )
+
+            elif table == "supplier_payments":
+                direction = txt(
+                    row.get("payment_type")
+                )
+
+            output.append(
+                {
+                    "المصدر": kind,
+                    "رقم السجل بالمصدر": int(row["id"]),
+                    "التاريخ": txt(
+                        row[date_column]
+                    ),
+                    "رقم المستند": txt(
+                        row[reference_column]
+                    ),
+                    "الحساب أو المسؤول": txt(
+                        row[party_column]
+                    ),
+                    "نوع الحركة": direction,
+                    "البيان": description,
+                    "المبلغ": num(
+                        row[amount_column]
+                    ),
+                    "ملاحظات": txt(
+                        row["notes"]
+                    )
+                }
+            )
+
+    st.info(
+        "هذه شاشة تجميع من المصادر؛ "
+        "لا تنشئ قيداً أو حركة مالية جديدة. "
+        "التعديل والحذف يتمان من صفحة المصدر."
+    )
+
+    if page == "الأفريقية - مشتريات":
+        st.caption(
+            "المشتريات والمرتجعات والمدفوعات "
+            "تظهر كأنواع مستقلة. لا تجمع مبالغها "
+            "باعتبارها جميعاً مشتريات صافية."
+        )
+
+    if page == "الأفريقية - شيكات":
+        st.caption(
+            "تجمع كل التحصيلات الموسومة "
+            "بسداد للأفريقية، بغض النظر "
+            "عن طريقة التحصيل."
+        )
+
+    if hidden_sources:
+        st.warning(
+            "مصادر غير ظاهرة لعدم وجود صلاحية عرض: "
+            + "، ".join(hidden_sources)
+        )
+
+    columns = [
+        "المصدر", "رقم السجل بالمصدر",
+        "التاريخ", "رقم المستند",
+        "الحساب أو المسؤول",
+        "نوع الحركة", "البيان",
+        "المبلغ", "ملاحظات"
+    ]
+
+    result = pd.DataFrame(
+        output,
+        columns=columns
+    )
+
+    search = st.text_input(
+        "بحث",
+        key="africa_search_" + page
+    )
+
+    if search and not result.empty:
+        mask = result.astype(str).apply(
+            lambda column: column.str.contains(
+                search,
+                regex=False,
+                na=False
+            )
+        ).any(axis=1)
+
+        result = result[mask]
+
+    st.dataframe(
+        result,
+        use_container_width=True
+    )
+
+    if not result.empty:
+        st.subheader(
+            "إجمالي حسب نوع المصدر"
+        )
+
+        st.dataframe(
+            result.groupby(
+                "المصدر",
+                as_index=False
+            )["المبلغ"].sum(),
+            use_container_width=True
+        )
+
+    if can(page, "export"):
+        download(
+            result,
+            "africa_" + page
+        )
+
+    st.caption(
+        "لإضافة بيانات Excel لهذا القسم، "
+        "ارفعها في صفحة المصدر، "
+        "واكتب في الملاحظات: سداد للأفريقية."
+    )
+
+
 def users_page():
     if not admin():
         st.error(
-            "إدارة المستخدمين للحساب الأساسي فقط"
+            "إدارة المستخدمين للحساب الأساسي فقط."
         )
         return
 
@@ -1919,7 +3115,11 @@ def users_page():
         FROM users ORDER BY id
         """
     )
-    st.dataframe(users, use_container_width=True)
+
+    st.dataframe(
+        users,
+        use_container_width=True
+    )
 
     with st.form("new_user"):
         username = st.text_input(
@@ -1929,7 +3129,8 @@ def users_page():
             "الاسم الكامل"
         )
         password = st.text_input(
-            "كلمة المرور", type="password"
+            "كلمة المرور",
+            type="password"
         )
         submitted = st.form_submit_button(
             "إنشاء حساب بلا صلاحيات"
@@ -1938,8 +3139,9 @@ def users_page():
     if submitted:
         if not username.strip() or not password:
             st.error(
-                "اسم المستخدم وكلمة المرور مطلوبان"
+                "اسم المستخدم وكلمة المرور مطلوبان."
             )
+
         elif not read(
             """
             SELECT id FROM users
@@ -1947,7 +3149,10 @@ def users_page():
             """,
             (username.strip(),)
         ).empty:
-            st.error("اسم المستخدم موجود")
+            st.error(
+                "اسم المستخدم موجود."
+            )
+
         else:
             write(
                 """
@@ -1972,7 +3177,8 @@ def users_page():
         users["id"].tolist(),
         format_func=lambda value: str(
             users.loc[
-                users["id"] == value, "username"
+                users["id"] == value,
+                "username"
             ].iloc[0]
         )
     )
@@ -1983,7 +3189,7 @@ def users_page():
 
     if user["role"] == "super_admin":
         st.info(
-            "الحساب الأساسي له جميع الصلاحيات "
+            "الحساب الأساسي له كل الصلاحيات "
             "ومحمي من الحذف والتعطيل."
         )
 
@@ -2009,12 +3215,13 @@ def users_page():
                     )
                 )
                 st.success(
-                    "تم تغيير كلمة المرور"
+                    "تم تغيير كلمة المرور."
                 )
             else:
                 st.error(
-                    "أدخل كلمة المرور الجديدة"
+                    "أدخل كلمة المرور الجديدة."
                 )
+
         return
 
     saved = read(
@@ -2036,9 +3243,17 @@ def users_page():
                 "الصفحة": page,
                 **{
                     label: lookup.get(
-                        (page, action), False
+                        (page, action),
+                        lookup.get(
+                            (
+                                LEGACY_ALIASES.get(page),
+                                action
+                            ),
+                            False
+                        )
                     )
-                    for action, label in ACTIONS.items()
+                    for action, label
+                    in ACTIONS.items()
                 }
             }
             for page in PAGES
@@ -2047,7 +3262,8 @@ def users_page():
 
     st.caption(
         "إلغاء عرض يمنع الدخول وكل العمليات. "
-        "السداد وتغيير الاستلام للمبيعات فقط."
+        "السداد الجماعي وتغيير الاستلام "
+        "يطبقان على المبيعات فقط."
     )
 
     edited = st.data_editor(
@@ -2072,6 +3288,7 @@ def users_page():
 
     if st.button("حفظ الصلاحيات"):
         connection = db()
+
         try:
             with connection:
                 for _, row in edited.iterrows():
@@ -2080,11 +3297,13 @@ def users_page():
                             bool(row[label])
                             and bool(row["عرض"])
                         )
+
                         connection.execute(
                             """
                             INSERT OR REPLACE INTO
                             page_permissions(
-                                user_id, page, action, allowed
+                                user_id, page,
+                                action, allowed
                             )
                             VALUES(?, ?, ?, ?)
                             """,
@@ -2101,7 +3320,10 @@ def users_page():
                     UPDATE users SET is_active = ?
                     WHERE id = ?
                     """,
-                    (int(active), int(user_id))
+                    (
+                        int(active),
+                        int(user_id)
+                    )
                 )
 
                 if replacement:
@@ -2121,10 +3343,13 @@ def users_page():
                     "permissions",
                     {"user_id": int(user_id)}
                 )
+
         finally:
             connection.close()
 
-        st.success("تم حفظ الصلاحيات")
+        st.success(
+            "تم حفظ الصلاحيات."
+        )
 
     confirm_delete = st.checkbox(
         "تأكيد حذف هذا المستخدم",
@@ -2136,6 +3361,7 @@ def users_page():
         disabled=not confirm_delete
     ):
         connection = db()
+
         try:
             with connection:
                 connection.execute(
@@ -2145,310 +3371,19 @@ def users_page():
                     """,
                     (int(user_id),)
                 )
+
                 connection.execute(
-                    "DELETE FROM users WHERE id = ?",
+                    """
+                    DELETE FROM users
+                    WHERE id = ?
+                    """,
                     (int(user_id),)
                 )
+
         finally:
             connection.close()
+
         refresh()
-
-
-def reports(page):
-    sources = [
-        "العملاء", "المبيعات", "المرتجعات",
-        "التحصيلات", "الخصومات", "المجلات"
-    ]
-
-    if not all(
-        can(source, "view") for source in sources
-    ):
-        st.warning(
-            "التقرير يحتاج صلاحية عرض جميع مصادره"
-        )
-        return
-
-    clients = data("العملاء")
-
-    if page == "كشف الحساب":
-        code, name = picker("report")
-
-        if not code:
-            return
-
-        left, right = st.columns(2)
-        start = left.date_input(
-            "من تاريخ", value=date(2024, 1, 1)
-        )
-        end = right.date_input(
-            "إلى تاريخ", value=date.today()
-        )
-
-        if end < start:
-            st.error("الفترة غير صحيحة")
-            return
-
-        customer = clients[
-            clients["customer_code"].astype(str) == code
-        ].iloc[0]
-
-        balance = num(customer["opening_balance"])
-        movements = []
-
-        movement_sources = [
-            (
-                "المبيعات", "invoice_date",
-                "invoice_total", 1, "invoice_no"
-            ),
-            (
-                "المرتجعات", "return_date",
-                "return_total", -1, "return_no"
-            ),
-            (
-                "التحصيلات", "collection_date",
-                "amount", -1, "invoice_no"
-            ),
-            (
-                "الخصومات", "discount_date",
-                "discount_value", -1, "invoice_no"
-            )
-        ]
-
-        for (
-            source, date_column,
-            amount_column, sign, reference_column
-        ) in movement_sources:
-            frame = data(source)
-            frame = frame[
-                frame["customer_code"].astype(str) == code
-            ]
-
-            for _, row in frame.iterrows():
-                parsed = pd.to_datetime(
-                    row[date_column],
-                    errors="coerce"
-                )
-
-                if pd.isna(parsed):
-                    continue
-
-                description = ""
-                external_reference = ""
-
-                if source == "المرتجعات":
-                    invoice = txt(
-                        row.get("original_invoice_no")
-                    )
-                    description = (
-                        f"مرتجع مرتبط بالفاتورة {invoice}"
-                        if invoice
-                        else "إشعار دائن على حساب العميل"
-                    )
-                    external_reference = txt(
-                        row.get("supply_reference")
-                    )
-
-                movements.append(
-                    {
-                        "date": parsed.date(),
-                        "type": source,
-                        "reference": txt(
-                            row.get(reference_column)
-                        ),
-                        "external": external_reference,
-                        "description": description,
-                        "value": (
-                            sign * num(
-                                row.get(amount_column)
-                            )
-                        )
-                    }
-                )
-
-        magazines = data("المجلات")
-        magazines = magazines[
-            magazines["customer_code"].astype(str) == code
-        ]
-
-        for _, row in magazines.iterrows():
-            month = txt(row["month"])
-            year = int(num(row["year"]))
-
-            if month in MONTHS and year:
-                movements.append(
-                    {
-                        "date": date(
-                            year,
-                            MONTHS.index(month) + 1,
-                            1
-                        ),
-                        "type": "المجلات",
-                        "reference": txt(
-                            row["magazine_type"]
-                        ),
-                        "external": "",
-                        "description": "خصم مجلة",
-                        "value": -num(
-                            row["discount_value"]
-                        )
-                    }
-                )
-
-        balance += sum(
-            movement["value"]
-            for movement in movements
-            if movement["date"] < start
-        )
-
-        output = [
-            {
-                "التاريخ": str(start),
-                "النوع": "رصيد بداية الفترة",
-                "المستند": "",
-                "رقم التوريد أو المرجع": "",
-                "البيان": "",
-                "مدين": 0,
-                "دائن": 0,
-                "الرصيد": balance
-            }
-        ]
-
-        for movement in sorted(
-            movements,
-            key=lambda value: value["date"]
-        ):
-            if not (
-                start <= movement["date"] <= end
-            ):
-                continue
-
-            amount = movement["value"]
-            balance += amount
-
-            output.append(
-                {
-                    "التاريخ": str(movement["date"]),
-                    "النوع": movement["type"],
-                    "المستند": movement["reference"],
-                    "رقم التوريد أو المرجع":
-                    movement["external"],
-                    "البيان": movement["description"],
-                    "مدين": max(amount, 0),
-                    "دائن": max(-amount, 0),
-                    "الرصيد": balance
-                }
-            )
-
-        report = pd.DataFrame(output)
-        st.subheader(f"{name} — {code}")
-        st.caption(
-            "يشمل كل الإشعارات الدائنة، "
-            "سواء مرتبطة بفواتير أم لا. "
-            "خصم المجلة مؤرخ بأول يوم من شهرها."
-        )
-
-    else:
-        search = st.text_input(
-            "اكتب الكل أو اسم العميل أو كوده"
-        )
-
-        if not search.strip():
-            st.info("مخفي")
-            return
-
-        report = clients[
-            [
-                "customer_code",
-                "customer_name",
-                "payment_method",
-                "opening_balance"
-            ]
-        ].copy()
-
-        totals_sources = [
-            (
-                "المبيعات",
-                "invoice_total",
-                "المبيعات"
-            ),
-            (
-                "المرتجعات",
-                "return_total",
-                "الإشعارات الدائنة والمرتجعات"
-            ),
-            (
-                "التحصيلات",
-                "amount",
-                "التحصيلات"
-            ),
-            (
-                "الخصومات",
-                "discount_value",
-                "الخصومات"
-            ),
-            (
-                "المجلات",
-                "discount_value",
-                "المجلات"
-            )
-        ]
-
-        for source, amount_column, label in totals_sources:
-            frame = data(source)
-            frame[amount_column] = pd.to_numeric(
-                frame[amount_column],
-                errors="coerce"
-            ).fillna(0)
-
-            totals = frame.groupby(
-                "customer_code"
-            )[amount_column].sum()
-
-            report[label] = (
-                report["customer_code"]
-                .map(totals)
-                .fillna(0)
-            )
-
-        report["المستحق"] = (
-            pd.to_numeric(
-                report["opening_balance"],
-                errors="coerce"
-            ).fillna(0)
-            + report["المبيعات"]
-            - report["الإشعارات الدائنة والمرتجعات"]
-            - report["التحصيلات"]
-            - report["الخصومات"]
-            - report["المجلات"]
-        )
-
-        if search.strip() != "الكل":
-            mask = report[
-                ["customer_code", "customer_name"]
-            ].astype(str).apply(
-                lambda column: column.str.contains(
-                    search,
-                    regex=False,
-                    na=False
-                )
-            ).any(axis=1)
-            report = report[mask]
-
-        report = report.rename(
-            columns={
-                "customer_code": "كود العميل",
-                "customer_name": "اسم العميل",
-                "payment_method": "طريقة الدفع",
-                "opening_balance": "رصيد أول المدة"
-            }
-        )
-
-    st.dataframe(
-        report, use_container_width=True
-    )
-
-    if can(page, "export"):
-        download(report, "report_" + page)
 
 
 def navigate(group):
@@ -2461,18 +3396,23 @@ def login_screen():
     st.title("تسجيل الدخول")
 
     with st.form("login"):
-        username = st.text_input("اسم المستخدم")
-        password = st.text_input(
-            "كلمة المرور", type="password"
+        username = st.text_input(
+            "اسم المستخدم"
         )
-        submitted = st.form_submit_button("دخول")
+        password = st.text_input(
+            "كلمة المرور",
+            type="password"
+        )
+        submitted = st.form_submit_button(
+            "دخول"
+        )
 
     if not submitted:
         return
 
     if not username.strip() or not password:
         st.error(
-            "أدخل اسم المستخدم وكلمة المرور"
+            "أدخل اسم المستخدم وكلمة المرور."
         )
         return
 
@@ -2495,10 +3435,11 @@ def login_screen():
         )
         st.session_state.group = "الرئيسية"
         st.rerun()
+
     else:
         st.error(
             "اسم المستخدم أو كلمة المرور غير صحيحة "
-            "أو الحساب غير مفعّل"
+            "أو الحساب غير مفعّل."
         )
 
 
@@ -2512,17 +3453,23 @@ def company_settings(company):
             "اسم النظام",
             value=txt(company["system_name"])
         )
-        submitted = st.form_submit_button("حفظ")
+        submitted = st.form_submit_button(
+            "حفظ"
+        )
 
     if not submitted:
         return
 
     if not can("إعدادات الشركة", "edit"):
-        st.error("ليس لديك صلاحية التعديل")
+        st.error(
+            "ليس لديك صلاحية التعديل."
+        )
         return
 
     if not company_name.strip():
-        st.error("اسم الشركة مطلوب")
+        st.error(
+            "اسم الشركة مطلوب."
+        )
         return
 
     write(
@@ -2536,17 +3483,21 @@ def company_settings(company):
             system_name.strip()
         )
     )
+
     refresh()
 
 
 def main():
-    st.caption("نسخة التشغيل: " + BUILD)
+    st.caption(
+        "نسخة التشغيل: " + BUILD
+    )
 
     try:
         initialize()
+
     except sqlite3.Error as error:
         st.error(
-            "تعذر تجهيز قاعدة البيانات؛ "
+            "تعذر تجهيز قاعدة البيانات. "
             "راجع سجل التشغيل ولا تحذف البيانات."
         )
         st.write(
@@ -2555,7 +3506,9 @@ def main():
         )
         return
 
-    st.session_state.setdefault("user", None)
+    st.session_state.setdefault(
+        "user", None
+    )
 
     if st.session_state.user is None:
         login_screen()
@@ -2580,7 +3533,10 @@ def main():
     )
 
     company = read(
-        "SELECT * FROM companies WHERE id = 1"
+        """
+        SELECT * FROM companies
+        WHERE id = 1
+        """
     ).iloc[0]
 
     st.title(
@@ -2604,7 +3560,9 @@ def main():
         else:
             st.warning(message)
 
-    if st.sidebar.button("تسجيل الخروج"):
+    if st.sidebar.button(
+        "تسجيل الخروج"
+    ):
         st.session_state.clear()
         st.rerun()
 
@@ -2613,7 +3571,10 @@ def main():
     )
 
     if group == "الرئيسية":
-        st.subheader("الأقسام الرئيسية")
+        st.subheader(
+            "الأقسام الرئيسية"
+        )
+
         columns = st.columns(3)
         visible = 0
 
@@ -2630,13 +3591,15 @@ def main():
                 args=(group_name,),
                 use_container_width=True
             )
+
             visible += 1
 
         if not visible:
             st.warning(
-                "لا توجد صفحات مصرح بها؛ "
+                "لا توجد صفحات مصرح بها. "
                 "اطلب من طارق ضبط صلاحياتك."
             )
+
         return
 
     st.sidebar.button(
@@ -2652,15 +3615,20 @@ def main():
     ]
 
     if not pages:
-        st.warning("لا توجد صفحات مصرح بها")
+        st.warning(
+            "لا توجد صفحات مصرح بها."
+        )
         return
 
     page = st.sidebar.radio(
-        group, pages, key="page"
+        group,
+        pages,
+        key="page"
     )
+
     st.subheader(page)
 
-    if page in CONFIG:
+    if page in PAGE_CONFIG:
         operations = ["عرض"]
 
         if can(page, "add"):
@@ -2670,7 +3638,9 @@ def main():
             can(page, "import")
             or can(page, "export")
         ):
-            operations.append("قالب واستيراد")
+            operations.append(
+                "قالب واستيراد"
+            )
 
         operation = st.radio(
             "العملية",
@@ -2681,16 +3651,26 @@ def main():
 
         if operation == "عرض":
             grid(page)
+
         elif operation == "إضافة":
             record_form(page)
+
         else:
             import_page(page)
 
+    elif page in {
+        "كشف حساب عميل",
+        "ملخص العملاء",
+        "كشف حساب مورد",
+        "ملخص الموردين"
+    }:
+        reports(page)
+
+    elif page.startswith("الأفريقية -"):
+        africa_page(page)
+
     elif page == "إدارة المستخدمين":
         users_page()
-
-    elif page in ("كشف الحساب", "الملخص"):
-        reports(page)
 
     elif page == "إعدادات الشركة":
         company_settings(company)
